@@ -1,6 +1,16 @@
 #lang knit typed/racket
 (require typed/racket)
 
+;; FIXME yarn changes not implemented
+;; FIXME reader/syntax tweaks not implemented
+;; FIXME view/print methods not implemented
+;; FIXME Knitspeak parser not implemented
+;; FIXME Knitspeak output not implemented
+;; FIXME knitout output not implemented
+;; FIXME CI not implemented
+;; FIXME need CHANGESLOG
+;; FIXME need documentation
+
 (define _DEBUG_ #f)
 (define _TEST_ #t)
 
@@ -546,7 +556,6 @@
      stitches-out-total))
   ;; aliases
   (define row rows)
-  (define round rows)
   (define rounds rows)
 
   #|
@@ -849,15 +858,19 @@
 
 ; macro definitions
 
+(define-syntax-rule (define-variable-repeat-stitch id st)
+  (define-syntax (id stx)
+    (syntax-case stx ()
+      [(_ n) #'(make-leaf n (stitch (stitchtype-rs-symbol st) 0))]
+      [_ #'(make-leaf 0 (stitch (stitchtype-rs-symbol st) 0))])))
+
 (define-syntax-rule (define-repeatable-stitch id st)
   (define-syntax-rule (id n)
-    ;(make-string n (integer->char (stitchtype-rs-symbol st)))))
     (make-leaf n (stitch (stitchtype-rs-symbol st) 0))))
 
 (define-syntax-rule (define-unrepeatable-stitch id st)
   (define-syntax (id stx)
     (syntax-case stx ()
-      ;[_ #'(string (integer->char (stitchtype-rs-symbol st)))])))
       [_ #'(make-leaf 1 (stitch (stitchtype-rs-symbol st) 0))])))
 
 #|
@@ -869,41 +882,41 @@
 ; stitch function definitions
   
 
-(define-repeatable-stitch k       (hash-ref stitch-hash #x6b))
-(define-repeatable-stitch p       (hash-ref stitch-hash #x70))
-(define-repeatable-stitch ktbl    (hash-ref stitch-hash #x6e))
-(define-repeatable-stitch ptbl    (hash-ref stitch-hash #x3f))
-(define-repeatable-stitch kb      (hash-ref stitch-hash #x21))
-(define-repeatable-stitch pb      (hash-ref stitch-hash #x25))
-(define-repeatable-stitch bo      (hash-ref stitch-hash #x54))
+(define-variable-repeat-stitch k    (hash-ref stitch-hash #x6b))
+(define-variable-repeat-stitch p    (hash-ref stitch-hash #x70))
+(define-variable-repeat-stitch ktbl (hash-ref stitch-hash #x6e))
+(define-variable-repeat-stitch ptbl (hash-ref stitch-hash #x3f))
+(define-variable-repeat-stitch kb   (hash-ref stitch-hash #x21))
+(define-variable-repeat-stitch pb   (hash-ref stitch-hash #x25))
+(define-variable-repeat-stitch bo   (hash-ref stitch-hash #x54))
 
-(define-repeatable-stitch slwyib  (hash-ref stitch-hash #x2a))
-(define-repeatable-stitch slwyif  (hash-ref stitch-hash #x51))
-(define-repeatable-stitch co      (hash-ref stitch-hash #xbc))
+(define-repeatable-stitch slwyib    (hash-ref stitch-hash #x2a))
+(define-repeatable-stitch slwyif    (hash-ref stitch-hash #x51))
+(define-repeatable-stitch co        (hash-ref stitch-hash #xbc))
 
-(define-unrepeatable-stitch drop  (hash-ref stitch-hash #x2c))
-(define-unrepeatable-stitch k2tog (hash-ref stitch-hash #x55))
-(define-unrepeatable-stitch p2tog (hash-ref stitch-hash #x57))
-(define-unrepeatable-stitch k3tog (hash-ref stitch-hash #x73))
-(define-unrepeatable-stitch p3tog (hash-ref stitch-hash #x75))
-(define-unrepeatable-stitch ssk   (hash-ref stitch-hash #x56))
-(define-unrepeatable-stitch ssp   (hash-ref stitch-hash #x58))
-(define-unrepeatable-stitch sssk  (hash-ref stitch-hash #x74))
-(define-unrepeatable-stitch sssp  (hash-ref stitch-hash #x76))
-(define-unrepeatable-stitch cdd   (hash-ref stitch-hash #x6f))
-(define-unrepeatable-stitch yo    (hash-ref stitch-hash #x41))
-(define-unrepeatable-stitch dyo   (hash-ref stitch-hash #x6a))
-(define-unrepeatable-stitch ml    (hash-ref stitch-hash #x3a))
-(define-unrepeatable-stitch mlp   (hash-ref stitch-hash #x78))
-(define-unrepeatable-stitch mr    (hash-ref stitch-hash #x3b))
-(define-unrepeatable-stitch mrp   (hash-ref stitch-hash #x79))
-(define-unrepeatable-stitch m     (hash-ref stitch-hash #x3e))
-(define-unrepeatable-stitch mp    (hash-ref stitch-hash #x40))
-(define-unrepeatable-stitch kyk   (hash-ref stitch-hash #x4c))
-(define-unrepeatable-stitch pyp   (hash-ref stitch-hash #x7d))
-(define-unrepeatable-stitch cdi   (hash-ref stitch-hash #x69))
-(define-unrepeatable-stitch mb    (hash-ref stitch-hash #xbf))
-(define-unrepeatable-stitch w&t   (hash-ref stitch-hash #x50))
+(define-unrepeatable-stitch drop    (hash-ref stitch-hash #x2c))
+(define-unrepeatable-stitch k2tog   (hash-ref stitch-hash #x55))
+(define-unrepeatable-stitch p2tog   (hash-ref stitch-hash #x57))
+(define-unrepeatable-stitch k3tog   (hash-ref stitch-hash #x73))
+(define-unrepeatable-stitch p3tog   (hash-ref stitch-hash #x75))
+(define-unrepeatable-stitch ssk     (hash-ref stitch-hash #x56))
+(define-unrepeatable-stitch ssp     (hash-ref stitch-hash #x58))
+(define-unrepeatable-stitch sssk    (hash-ref stitch-hash #x74))
+(define-unrepeatable-stitch sssp    (hash-ref stitch-hash #x76))
+(define-unrepeatable-stitch cdd     (hash-ref stitch-hash #x6f))
+(define-unrepeatable-stitch yo      (hash-ref stitch-hash #x41))
+(define-unrepeatable-stitch dyo     (hash-ref stitch-hash #x6a))
+(define-unrepeatable-stitch ml      (hash-ref stitch-hash #x3a))
+(define-unrepeatable-stitch mlp     (hash-ref stitch-hash #x78))
+(define-unrepeatable-stitch mr      (hash-ref stitch-hash #x3b))
+(define-unrepeatable-stitch mrp     (hash-ref stitch-hash #x79))
+(define-unrepeatable-stitch m       (hash-ref stitch-hash #x3e))
+(define-unrepeatable-stitch mp      (hash-ref stitch-hash #x40))
+(define-unrepeatable-stitch kyk     (hash-ref stitch-hash #x4c))
+(define-unrepeatable-stitch pyp     (hash-ref stitch-hash #x7d))
+(define-unrepeatable-stitch cdi     (hash-ref stitch-hash #x69))
+(define-unrepeatable-stitch mb      (hash-ref stitch-hash #xbf))
+(define-unrepeatable-stitch w&t     (hash-ref stitch-hash #x50))
 
 ;; tests
 (when _TEST_

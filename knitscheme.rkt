@@ -17,11 +17,10 @@
 
 (module knit-structs typed/racket
   (require typed/racket
-           ;racket/function ; needed for `curry`
            racket/list) ; needed for `flatten`, `range`
   (provide (all-defined-out))
   
-  (define _DEBUG_MODULE_ #t)
+  (define _DEBUG_MODULE_ #f)
  
   ;; restrict list to unique elements
   (: uniq : (All (A) (Listof A) -> (Listof A)))
@@ -198,7 +197,7 @@
       [([x : Positive-Index]
         [y : Positive-Index]
         [z : Positive-Index]) (cast (range x (add1 y) z) (Listof Positive-Index))]
-      [else (raise "error")]))
+      [else (error "Error in defining sequence")]))
   (define seq sequence)
   
 
@@ -389,29 +388,6 @@
             (cast null Tree)
             tree)))
   
-  ;; tests
-  (when _DEBUG_MODULE_
-    (define t1
-      (make-tree (make-leaf 2 (stitch #x70 0))
-                 (make-node 0 (make-tree (make-leaf 1 (stitch #x6f 0))
-                                         (make-node 3 (make-tree (make-leaf 2 (stitch #x54 0))))
-                                         (make-leaf 2 (stitch #x6f 0))))
-                 (make-leaf 3 (stitch #x6a 0))))
-    (displayln t1)
-    (displayln (flatten-tree t1))
-    (displayln (tree-var-replace t1 2))
-    (tree-count-var t1)
-    (tree-var t1)
-    (define t2
-      (make-tree (make-leaf 0 (stitch #x70 0))
-                 (make-leaf 0 (stitch #x6f 0))))
-    (displayln t2)
-    (displayln (flatten-tree t2))
-    (displayln (tree-var-replace t2 2))
-    (tree-count-var t2)
-    (tree-var t2))
-  
-  
   ;; define data structs
 
   ;; non-empty list
@@ -435,22 +411,22 @@
     ([rownums : (Listof Positive-Index)]
      [stitches : Tree]
      [memo : String]
+     [stitches-in-total : Natural]
+     [stitches-out-total : Natural]
      [stitches-in-fixed : Natural]
      [stitches-out-fixed : Natural]
      [stitches-in-var : Natural]
-     [stitches-out-var : Natural]
-     [stitches-in-total : Natural]
-     [stitches-out-total : Natural])
+     [stitches-out-var : Natural])
     #:guard
     (lambda (rownums
              stitches
              memo
+             stitches-in-total
+             stitches-out-total
              stitches-in-fixed
              stitches-out-fixed
              stitches-in-var
              stitches-out-var
-             stitches-in-total
-             stitches-out-total
              type-name)
       ;; flatten and sort list of row numbers
       (let ([rownums~ (sort ((inst uniq (Listof Positive-Index)) (flatten rownums)) <)]
@@ -460,18 +436,18 @@
           (displayln "In struct Rows")
           (displayln (~a rownums))
           (displayln (~a stitches))
+          (displayln (~a stitches-in-total))
+          (displayln (~a stitches-out-total))
           (displayln (~a stitches-in-fixed))
           (displayln (~a stitches-out-fixed))
           (displayln (~a stitches-in-var))
-          (displayln (~a stitches-out-var))
-          (displayln (~a stitches-in-total))
-          (displayln (~a stitches-out-total)))
+          (displayln (~a stitches-out-var)))
         ;; check valid row numbers exist
         (if (zero? (length rownums~))
-            (raise "Error: no row numbers specified")
+            (error "no row numbers specified")
             ;; check no more than one variable repeat
             (if (> var-count 1)
-                (raise "Error: more than one variable number repeat specified")
+                (error "more than one variable number repeat specified")
                 (let ([stitches-in-fixed~ (sum (map leaf-stitches-in flat))]
                       [stitches-out-fixed~ (sum (map leaf-stitches-out flat))])
                   (if (zero? var-count)
@@ -479,17 +455,22 @@
                       (if (and
                            (not (zero? stitches-out-total))
                            (not (= stitches-out-fixed~ stitches-out-total)))
-                          (raise "Error: total number of stitches produced does not match stitches in row")
-                          ;; result
-                          (values rownums~
-                                  stitches
-                                  memo
-                                  stitches-in-fixed~
-                                  stitches-out-fixed~
-                                  0
-                                  0
-                                  stitches-in-fixed~
-                                  stitches-out-fixed~))
+                          (error "total number of stitches produced does not match stitches in row")
+                          (if (and
+                               (consecutive-rows rownums~)
+                               (not (= stitches-in-fixed~
+                                       stitches-out-fixed~)))             
+                              (error "consecutive rows are not conformable")
+                              ;; result
+                              (values rownums~
+                                      stitches
+                                      memo
+                                      stitches-in-fixed~
+                                      stitches-out-fixed~
+                                      stitches-in-fixed~
+                                      stitches-out-fixed~
+                                      0
+                                      0)))
                       ;; one variable repeat
                       (let* ([flat-var (flatten-tree (tree-var stitches))]
                              [stitches-in-var~ (sum (map leaf-stitches-in flat-var))]
@@ -498,12 +479,12 @@
                             ;; #:stitches has been specified
                             ;; check that variable number repeat can be replaced by fixed value
                             (if (zero? stitches-out-var~)                     
-                                (raise "Error: total number of stitches produced does not conform with variable number repeat")
+                                (error "total number of stitches produced does not conform with variable number repeat")
                                 (let-values ([(q r)
                                               (quotient/remainder (- stitches-out-total stitches-out-fixed~)
                                                                   stitches-out-var~)])
                                   (if (not (zero? r))
-                                      (raise "Error: total number of stitches produced does not conform with variable number repeat")
+                                      (error "total number of stitches produced does not conform with variable number repeat")
                                       (if (consecutive-rows rownums~)
                                           ;; consecutive rows
                                           ;; replace variable number repeat by fixed value
@@ -512,27 +493,27 @@
                                                  [stitches-in-total~ (sum (map leaf-stitches-in flat~))])
                                             ;; check that stitches in/out are conformable for consecutive rows
                                             (if (not (= stitches-in-total~ stitches-out-total))                 
-                                                (raise "Error: consecutive rows are not conformable")
+                                                (error "consecutive rows are not conformable")
                                                 ;; result
                                                 (values rownums~
                                                         stitches~
                                                         memo
                                                         stitches-out-total
                                                         stitches-out-total
-                                                        0
-                                                        0
                                                         stitches-out-total
-                                                        stitches-out-total)))
+                                                        stitches-out-total
+                                                        0
+                                                        0)))
                                           ;; no consecutive rows
                                           (values rownums~
                                                   stitches
                                                   memo
+                                                  stitches-in-total
+                                                  stitches-out-total
                                                   stitches-in-fixed~
                                                   stitches-out-fixed~
                                                   stitches-in-var~
-                                                  stitches-out-var~
-                                                  stitches-in-total
-                                                  stitches-out-total)))))
+                                                  stitches-out-var~)))))
                             ;; #:stitches has not been specified
                             (let ([diff1 (abs (- stitches-in-fixed~ stitches-out-fixed~))]
                                   [diff2 (abs (- stitches-in-var~ stitches-out-var~))])
@@ -545,17 +526,17 @@
                                    (not (zero? diff1))
                                    (or (zero? diff2)
                                        (not (zero? (remainder diff1 diff2)))))                      
-                                  (raise "Error: consecutive rows are not conformable")
+                                  (error "consecutive rows are not conformable")
                                   ;; result
                                   (values rownums~
                                           stitches
                                           memo
+                                          0
+                                          0
                                           stitches-in-fixed~
                                           stitches-out-fixed~
                                           stitches-in-var~
-                                          stitches-out-var~
-                                          0
-                                          0)))))))))))
+                                          stitches-out-var~)))))))))))
     #:transparent)
 
   #|
@@ -572,35 +553,11 @@
      (cast (flatten rownums) (Listof Positive-Index))
      tree
      memo
-     0 0 0 0 0
-     stitches-out-total))
+     0 stitches-out-total 0 0 0 0))
   ;; aliases
   (define row rows)
   (define rounds rows)
 
-  #|
-  ;; tests
-  ;; rows not consecutive
-  rows(1 3)((list-ref t1 0)
-            (list-ref t1 2))
-  ;; consecutive and conformable
-  rows(1 2)((list-ref t1 0)
-            (list-ref t1 0))
-  ;; consecutive and conformable
-  rows('(1 2) '(1) #:memo "new memo")((list-ref t1 0)
-                                      (list-ref t1 1)
-                                      (list-ref t1 2))
-  ;; consecutive but not conformable
-  rows(1 2)((list-ref t1 0)
-            (list-ref t1 2))
-  ;; consecutive but not conformable
-  rows(1 2)((list-ref t1 0)
-            (list-ref t1 1)
-            (make-leaf 1 (stitch #x6a 0)))
-  ;; no row numbers
-  rows(null)((list-ref t1 0))
-  |#
-  
   ;; information for one row/round
   ;; NB unlike Knitspeak, we do not encode Row/Round info for each row.
   ;; The whole pattern is either flat or circular.
@@ -610,12 +567,12 @@
   (struct Rowinfo
     ([stitches : Tree]
      [memo : String]
+     [stitches-in-total : Natural]
+     [stitches-out-total : Natural]
      [stitches-in-fixed : Natural]   ; only used in
      [stitches-out-fixed : Natural]  ; guard function
      [stitches-in-var : Natural]     ; and subsequently
-     [stitches-out-var : Natural]    ; set to zero
-     [stitches-in-total : Natural]
-     [stitches-out-total : Natural])
+     [stitches-out-var : Natural])   ; set to zero
     #:transparent)
   
   ;; 2D vector:
@@ -630,12 +587,12 @@
     (lambda (data rowcount type-name)
       (let ([fl : (Listof Positive-Index) (vector->list (apply vector-append (vector->list data)))])
         (if (> (apply min fl) 1)
-            (raise "Error: row numbers must start at 1")
+            (error "row numbers must start at 1")
             (if (or
                  (equal? fl '(1))
                  (equal? (uniq (diff - (sort fl <))) '(1)))
                 (values data (apply max fl))
-                (raise "Error: pattern must specify consecutive row numbers")))))
+                (error "pattern must specify consecutive row numbers")))))
     #:transparent)
 
   ;; alternative constructor
@@ -680,7 +637,7 @@
       (if (and
            (eq? technology 'machine)
            (eq? geometry 'circular))
-          (raise "Error: machine knit patterns must be flat, not circular")
+          (error "machine knit patterns must be flat, not circular")
           ;; make vectors of stitch totals
           (let ([n-rows : Index (Rowmap-rowcount rownums)])
             (let ([stitches-in-fixed ((inst make-vector Natural) n-rows 0)]
@@ -704,22 +661,21 @@
                   (displayln (~a stitches-out-total)))
                 ;; update vectors of stitch totals
                 (for ([i (in-range (vector-length (Rowmap-data rownums)))])
-                  (let ([row-i (vector-ref rowinfo i)]
+                  (let ([rowinfo-i (vector-ref rowinfo i)]
                         [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rownums) i)])
-                    (let ([stitches-in-fixed-row-i (Rowinfo-stitches-in-fixed row-i)]
-                          [stitches-out-fixed-row-i (Rowinfo-stitches-out-fixed row-i)]
-                          [stitches-in-var-row-i (Rowinfo-stitches-in-var row-i)]
-                          [stitches-out-var-row-i (Rowinfo-stitches-out-var row-i)]
-                          [stitches-in-total-row-i (Rowinfo-stitches-in-total row-i)]
-                          [stitches-out-total-row-i (Rowinfo-stitches-out-total row-i)]                
-                          [var-count-row-i ((compose1 tree-count-var Rowinfo-stitches) row-i)])
+                    (let ([stitches-in-total-row-i (Rowinfo-stitches-in-total rowinfo-i)]
+                          [stitches-out-total-row-i (Rowinfo-stitches-out-total rowinfo-i)]  [stitches-in-fixed-row-i (Rowinfo-stitches-in-fixed rowinfo-i)]
+                          [stitches-out-fixed-row-i (Rowinfo-stitches-out-fixed rowinfo-i)]
+                          [stitches-in-var-row-i (Rowinfo-stitches-in-var rowinfo-i)]
+                          [stitches-out-var-row-i (Rowinfo-stitches-out-var rowinfo-i)]              
+                          [var-count-row-i ((compose1 tree-count-var Rowinfo-stitches) rowinfo-i)])
                       (for ([j (in-range (vector-length rownums-i))])
+                        (vector-set! stitches-in-total (sub1 (vector-ref rownums-i j)) stitches-in-total-row-i)
+                        (vector-set! stitches-out-total (sub1 (vector-ref rownums-i j)) stitches-out-total-row-i)
                         (vector-set! stitches-in-fixed (sub1 (vector-ref rownums-i j)) stitches-in-fixed-row-i)
                         (vector-set! stitches-out-fixed (sub1 (vector-ref rownums-i j)) stitches-out-fixed-row-i)
                         (vector-set! stitches-in-var (sub1 (vector-ref rownums-i j)) stitches-in-var-row-i)
                         (vector-set! stitches-out-var (sub1 (vector-ref rownums-i j)) stitches-out-var-row-i)
-                        (vector-set! stitches-in-total (sub1 (vector-ref rownums-i j)) stitches-in-total-row-i)
-                        (vector-set! stitches-out-total (sub1 (vector-ref rownums-i j)) stitches-out-total-row-i)
                         (vector-set! var-count (sub1 (vector-ref rownums-i j)) var-count-row-i)))))
                 (set-box! var-count-total-final (sum (vector->list var-count)))
                 (when _DEBUG_MODULE_
@@ -728,8 +684,10 @@
                 ;; loop continuation expression
                 (if (> (unbox var-count-total-initial)
                        (unbox var-count-total-final))
-                    ;; constrain adjacent rows
+                    ;; have we just constrained some repeat variables?
+                    ;; if so, do the loop again
                     (begin
+                      ;; constrain adjacent rows
                       (set-box! var-count-total-initial (sum (vector->list var-count)))
                       (for ([j (in-range (sub1 n-rows))])
                         (let ([i (add1 j)])
@@ -738,7 +696,7 @@
                                  (zero? (vector-ref var-count i))
                                  (not (= (vector-ref stitches-out-total j)
                                          (vector-ref stitches-in-fixed i))))
-                                (raise (format "Error: pattern rows ~a and ~a are not conformable" i (add1 i)))
+                                (error (format "pattern rows ~a and ~a are not conformable" i (add1 i)))
                                 (vector-set! stitches-in-total i
                                              (vector-ref stitches-out-total j))))
                           (if (zero? (vector-ref stitches-out-total j))
@@ -746,12 +704,12 @@
                                    (zero? (vector-ref var-count j))
                                    (not (= (vector-ref stitches-in-total i)
                                            (vector-ref stitches-out-fixed j))))
-                                  (raise (format "Error: pattern rows ~a and ~a are not conformable" i (add1 i)))
+                                  (error (format "pattern rows ~a and ~a are not conformable" i (add1 i)))
                                   (vector-set! stitches-out-total j
                                                (vector-ref stitches-in-total i)))
                               (when (not (= (vector-ref stitches-in-total i)
                                             (vector-ref stitches-out-total j)))
-                                (raise (format "Error: pattern rows ~a and ~a are not conformable" i (add1 i)))))))
+                                (error (format "pattern rows ~a and ~a are not conformable" i (add1 i)))))))
                       (when _DEBUG_MODULE_
                         (displayln (~a stitches-in-total))
                         (displayln (~a stitches-out-total)))
@@ -761,7 +719,7 @@
                               [var-count-j (vector-ref var-count j)])   
                           (when (not (zero? var-count-j))
                             (if (> var-count-j 1)
-                                (raise (format "Error: more than one variable number repeat specified in row ~a" i))
+                                (error (format "more than one variable number repeat specified in row ~a" i))
                                 ;; one variable repeat in row (j+1)
                                 (let ([in-total (vector-ref stitches-in-total j)]
                                       [out-total (vector-ref stitches-out-total j)])                   
@@ -777,16 +735,16 @@
                                            (not (zero? out-var))
                                            (not (= (quotient (- in-total in-fixed) in-var) ; qi
                                                    (quotient (- out-total out-fixed) out-var)))) ; qo
-                                      (raise (format "Error: incompatible constraints in row ~a" i)))
+                                      (error (format "incompatible constraints in row ~a" i)))
                                     (when (and
                                            (not (zero? in-total))
                                            (not (zero? in-var)))
                                       (let ([k (rowmap-find rownums i)])
                                         (if (not k)
-                                            (raise (format "Error: could not find row ~a in pattern" i))
-                                            (let* ([rowinfo~ (vector-ref rowinfo k)]
+                                            (error (format "could not find row ~a in pattern" i))
+                                            (let* ([rowinfo-k (vector-ref rowinfo k)]
                                                    [qi (quotient (- in-total in-fixed) in-var)]
-                                                   [stitches~ (tree-var-replace (Rowinfo-stitches rowinfo~) qi)]
+                                                   [stitches~ (tree-var-replace (Rowinfo-stitches rowinfo-k) qi)]
                                                    [out-total~ (+ out-fixed (* qi out-var))])
                                               (begin
                                                 (vector-set! stitches-out-total j
@@ -794,22 +752,19 @@
                                                 (vector-set! rowinfo k
                                                              (Rowinfo
                                                               stitches~
-                                                              (Rowinfo-memo rowinfo~)
-                                                              0 ; in-fixed
-                                                              0 ; out-fixed
-                                                              0 ; in-var
-                                                              0 ; out-var
+                                                              (Rowinfo-memo rowinfo-k)
                                                               in-total
-                                                              out-total~)))))))
+                                                              out-total~
+                                                              0 0 0 0)))))))
                                     (when (and
                                            (not (zero? out-total))
                                            (not (zero? out-var)))
                                       (let ([k (rowmap-find rownums i)])
                                         (if (not k)
-                                            (raise (format "Error: could not find row ~a in pattern" i))
-                                            (let* ([rowinfo~ (vector-ref rowinfo k)]
+                                            (error (format "could not find row ~a in pattern" i))
+                                            (let* ([rowinfo-k (vector-ref rowinfo k)]
                                                    [qo (quotient (- out-total out-fixed) out-var)]
-                                                   [stitches~ (tree-var-replace (Rowinfo-stitches rowinfo~) qo)]
+                                                   [stitches~ (tree-var-replace (Rowinfo-stitches rowinfo-k) qo)]
                                                    [in-total~ (+ in-fixed (* qo in-var))])
                                               (begin
                                                 (vector-set! stitches-in-total j
@@ -817,13 +772,10 @@
                                                 (vector-set! rowinfo k
                                                              (Rowinfo
                                                               stitches~
-                                                              (Rowinfo-memo rowinfo~)
-                                                              0 ; in-fixed
-                                                              0 ; out-fixed
-                                                              0 ; in-var
-                                                              0 ; out-var
+                                                              (Rowinfo-memo rowinfo-k)
                                                               in-total~
-                                                              out-total)))))))))))))
+                                                              out-total
+                                                              0 0 0 0)))))))))))))
                       ;; continue loop
                       (do-loop))
                     ;; after exiting loop
@@ -834,14 +786,25 @@
                                                        #:when (not (zero? (vector-ref var-count j))))
                                     (add1 j))])
                           ;; no constraints
-                          (raise (string-append "Error: unconstrained variable repeat in " (format-rows xs))))) 
+                          (error (string-append "unconstrained variable repeat in " (format-rows xs))))) 
                       ;; check that consecutive rows are conformable
                       (if (and (> n-rows 1)
                                (for/or ([i (in-range 1 n-rows)])
                                  (not (= (vector-ref stitches-in-total i) (vector-ref stitches-out-total (sub1 i))))))
-                          (raise "Error: pattern rows not conformable")
-                          ;; result
-                          (values rowinfo rownums technology geometry startface startside gauge yarntype)))))))))
+                          (error "pattern rows not conformable")
+                          (begin
+                            ;; zero out fixed/var totals                          
+                            (for ([i (in-range (vector-length (Rowmap-data rownums)))])
+                              (let ([rowinfo-i (vector-ref rowinfo i)])
+                                (vector-set! rowinfo i
+                                             (Rowinfo
+                                              (Rowinfo-stitches rowinfo-i)
+                                              (Rowinfo-memo rowinfo-i)
+                                              (Rowinfo-stitches-in-total rowinfo-i)
+                                              (Rowinfo-stitches-out-total rowinfo-i)
+                                              0 0 0 0))))                    
+                            ;; result
+                            (values rowinfo rownums technology geometry startface startside gauge yarntype))))))))))
     #:transparent)
 
   #|
@@ -882,12 +845,12 @@
                       (cons (Rowinfo
                              (Rows-stitches x)
                              (Rows-memo x)
+                             (Rows-stitches-in-total x)
+                             (Rows-stitches-out-total x)
                              (Rows-stitches-in-fixed x)
                              (Rows-stitches-out-fixed x)
                              (Rows-stitches-in-var x)
-                             (Rows-stitches-out-var x)
-                             (Rows-stitches-in-total x)
-                             (Rows-stitches-out-total x))
+                             (Rows-stitches-out-var x))
                             y))
                     null
                     rows)))]
@@ -936,14 +899,8 @@
     (syntax-case stx ()
       [_ #'(make-leaf 1 (stitch (stitchtype-rs-symbol st) 0))])))
 
-#|
-(module+ test
-  (require rackunit)
-  (check-equal? x3("-") "---"))
-|#
 
-; stitch function definitions
-  
+; stitch function definitions  
 
 (define-variable-repeat-stitch k    (hash-ref stitch-hash #x6b))
 (define-variable-repeat-stitch p    (hash-ref stitch-hash #x70))
@@ -982,56 +939,384 @@
 (define-unrepeatable-stitch w&t     (hash-ref stitch-hash #x50))
 
 ;; tests
+  
+(require typed/rackunit)
+  
 (when _TEST_
+
+  ;; tests of Tree functions
+  
+  (define t1
+    (make-tree (make-leaf 2 (stitch #x70 0))
+               (make-node 0 (make-tree (make-leaf 1 (stitch #x6f 0))
+                                       (make-node 3 (make-tree (make-leaf 2 (stitch #x54 0))))
+                                       (make-leaf 2 (stitch #x6f 0))))
+               (make-leaf 3 (stitch #x6a 0))))
+  
+  (check-equal?
+   t1
+   '((2 . #s(stitch 112 0))
+     (0
+      (1 . #s(stitch 111 0))
+      (3 (2 . #s(stitch 84 0)))
+      (2 . #s(stitch 111 0)))
+     (3 . #s(stitch 106 0))))
+  
+  (check-equal?
+   (flatten-tree t1)
+   '((2 . #s(stitch 112 0))
+     (3 . #s(stitch 106 0))))
+   
+  (check-equal?
+   (tree-var-replace t1 2)   
+   '((2 . #s(stitch 112 0))
+     (2
+      (1 . #s(stitch 111 0))
+      (3 (2 . #s(stitch 84 0)))
+      (2 . #s(stitch 111 0)))
+     (3 . #s(stitch 106 0))))
+
+  (check-equal?
+   (tree-count-var t1)
+   1)
+    
+  (check-equal?
+   (tree-var t1)
+   '((1
+      (1 . #s(stitch 111 0))
+      (3 (2 . #s(stitch 84 0)))
+      (2 . #s(stitch 111 0)))))
+
+  
+  (define t2
+    (make-tree (make-leaf 0 (stitch #x70 0))
+               (make-leaf 0 (stitch #x6f 0))))
+  
+  (check-equal?
+   t2
+   '((0 . #s(stitch 112 0))
+     (0 . #s(stitch 111 0))))
+  
+  (check-equal?
+   (flatten-tree t2)
+   '())
+   
+  (check-equal?
+   (tree-var-replace t2 2)   
+   '((2 . #s(stitch 112 0))
+     (2 . #s(stitch 111 0))))
+   
+  (check-equal?
+   (tree-count-var t2)
+   2)
+   
+  (check-equal?
+   (tree-var t2)   
+   '((1 . #s(stitch 112 0))))
+  
+  ;; tests of `rows` constructor
+  
+  ;; rows not consecutive
+  (check-equal?
+   rows(1 3)((list-ref t1 0)
+             (list-ref t1 2))
+   (Rows
+    '(1 3)
+    '((2 . #s(stitch 112 0)) (3 . #s(stitch 106 0))) "" 11 5 11 5 0 0))
+  
+  ;; consecutive and conformable
+  (check-equal?
+   rows(1 2)((list-ref t1 0)
+             (list-ref t1 0))
+   (Rows
+    '(1 2)
+    '((2 . #s(stitch 112 0)) (2 . #s(stitch 112 0))) "" 4 4 4 4 0 0))
+  
+  ;; consecutive and conformable
+  (check-equal?
+   rows('(1 2) '(1) #:memo "new memo")((list-ref t1 0)
+                                       (list-ref t1 1)
+                                       (list-ref t1 2))
+   (Rows
+    '(1 2)
+    '((2 . #s(stitch 112 0))
+      (0
+       (1 . #s(stitch 111 0))
+       (3 (2 . #s(stitch 84 0)))
+       (2 . #s(stitch 111 0)))
+      (3 . #s(stitch 106 0))) "new memo"  0 0 11 5 6 3))
+  
+  ;; consecutive but not conformable   
+  (check-exn
+   exn:fail?
+   (lambda ()
+     rows(1 2)((list-ref t1 0)
+               (list-ref t1 2))))
+  
+  ;; consecutive but not conformable
+  (check-exn
+   exn:fail?
+   (lambda ()
+     rows(1 2)((list-ref t1 0)
+               (list-ref t1 1)
+               (make-leaf 1 (stitch #x6a 0)))))
+  
+  ;; no row numbers
+  (check-exn
+   exn:fail?
+   (lambda ()
+     rows(null)((list-ref t1 0))))
+  
+  ;; tests of `pattern` constructor
+  
   ;; keywords, single row
-  (pattern #:technology 'hand #:startface 'ws #:startside 'left rows(1)(k(1)))
+  (check-equal?
+   (pattern #:technology 'hand #:startface 'ws #:startside 'left rows(1 #:memo "memo")(k(1)))
+   (Pattern
+    (vector (Rowinfo '((1 . #s(stitch 107 0))) "memo" 1 1 0 0 0 0))
+    (Rowmap '#(#(1)) 1)
+    'hand
+    'flat
+    'ws
+    'left
+    #f
+    '#(#f)))
+    
   ;; machine knits cannot be circular
-  ;(pattern #:technology 'machine #:geometry 'circular rows(1)(k(1)))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern #:technology 'machine #:geometry 'circular rows(1)(k(1)))))
+
   ;; variable repeat leaf, number of stitches supplied
-  (pattern rows(1 3 #:stitches 2)(k(0) m) rows(2 4)(k2tog))
+  (check-equal?
+   (pattern rows(1 3 #:stitches 2)(k(0) m) rows(2 4)(k2tog))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (1 . #s(stitch 62 0))) "" 1 2 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 85 0))) "" 2 1 0 0 0 0))
+    (Rowmap '#(#(1 3) #(2 4)) 4)
+    'machine
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+
   ;; variable repeat node, number of stitches supplied, variable repeat replaced in Rows struct guard function
-  (pattern #:technology 'hand #:geometry 'circular rows(seq(1 4) #:stitches 8)(k(1) repeat(k(1) p(1)) k(1)))
+  (check-equal?
+   (pattern #:technology 'hand #:geometry 'circular rows(seq(1 4) #:stitches 8)(k(1) repeat(k(1) p(1)) k(1)))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0))
+    (Rowmap '#(#(1 2 3 4)) 4)
+    'hand
+    'circular
+    'rs
+    'right
+    #f
+    '#(#f)))
+  
   ;; variable repeat node, number of stitches supplied
-  (pattern #:technology 'hand #:geometry 'flat
-           rows(1 3 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
-           rows(2 4)(k(1) repeat(p(1) k(1)) k(1)))
+  (check-equal?
+   (pattern #:technology 'hand #:geometry 'flat
+            rows(1 3 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
+            rows(2 4)(k(1) repeat(p(1) k(1)) k(1)))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (1 . #s(stitch 112 0)) (1 . #s(stitch 107 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0))
+    (Rowmap '#(#(1 3) #(2 4)) 4)
+    'hand
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+  
   ;; repeated application of constraints
-  (pattern #:technology 'hand #:geometry 'flat
-           rows(1 5 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
-           rows(2 6)(k(1) repeat(p(1) k(1)) k(1))
-           rows(3 7)(k(1) repeat(k(2)) k(1))
-           rows(4 8)(k(1) repeat(p(2)) k(1)))
+  (check-equal?
+   (pattern #:technology 'hand #:geometry 'flat
+            rows(1 5 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
+            rows(2 6)(k(1) repeat(p(1) k(1)) k(1))
+            rows(3 7)(k(1) repeat(k(2)) k(1))
+            rows(4 8)(k(1) repeat(p(2)) k(1)))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (1 . #s(stitch 112 0)) (1 . #s(stitch 107 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (2 . #s(stitch 107 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (2 . #s(stitch 112 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0))
+    (Rowmap '#(#(1 5) #(2 6) #(3 7) #(4 8)) 8)
+    'hand
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+  
   ;; repeated application of constraints, last line outputs zero stitches
-  #|
-  (pattern #:technology 'hand #:geometry 'flat
-           rows(1 5 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
-           rows(2 6)(k(1) repeat(p(1) k(1)) k(1))
-           rows(3 7)(k(1) repeat(k(2)) k(1))
-           rows(4 8)(k(1) repeat(p(2)) k(1))
-           row(9)(bo))
-|#
+  (check-equal?
+   (pattern #:technology 'hand #:geometry 'flat
+            rows(1 5 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
+            rows(2 6)(k(1) repeat(p(1) k(1)) k(1))
+            rows(3 7)(k(1) repeat(k(2)) k(1))
+            rows(4 8)(k(1) repeat(p(2)) k(1))
+            row(9)(bo))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (1 . #s(stitch 112 0)) (1 . #s(stitch 107 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (2 . #s(stitch 107 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (3 (2 . #s(stitch 112 0)))
+        (1 . #s(stitch 107 0))) "" 8 8 0 0 0 0)
+     (Rowinfo '((8 . #s(stitch 84 0))) "" 8 0 0 0 0 0))
+    (Rowmap '#(#(1 5) #(2 6) #(3 7) #(4 8) #(9)) 9)
+    'hand
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+  
   ;; constrained by stitches out
-  ;(pattern rows(1)(k(0) m) rows(2)(k2tog))
+  (check-equal?
+   (pattern rows(1)(k(0) m) rows(2)(k2tog))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (1 . #s(stitch 62 0))) "" 1 2 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 85 0))) "" 2 1 0 0 0 0))
+    (Rowmap '#(#(1) #(2)) 2)
+    'machine
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+  
   ;; constrained by stitches in
-  ;(pattern rows(1)(k2tog) rows(2)(k(0) m))
+  (check-equal?
+   (pattern rows(1)(k2tog) rows(2)(k(0) m))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 85 0))) "" 2 1 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (1 . #s(stitch 62 0))) "" 1 2 0 0 0 0))
+    (Rowmap '#(#(1) #(2)) 2)
+    'machine
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+  
   ;; constrained by both stitches in and stitches out
-  ;(pattern rows(1 3 5)(k2tog) rows(2 4)(k(0) m))
+  (check-equal?
+   (pattern rows(1 3 5)(k2tog) rows(2 4)(k(0) m))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((1 . #s(stitch 85 0))) "" 2 1 0 0 0 0)
+     (Rowinfo
+      '((1 . #s(stitch 107 0))
+        (1 . #s(stitch 62 0))) "" 1 2 0 0 0 0))
+    (Rowmap '#(#(1 3 5) #(2 4)) 5)
+    'machine
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+  
   ;; unconstrained variable repeat (single row)
-  ;(pattern row(1)(k(0)))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern row(1)(k(0)))))
+  
   ;; unconstrained variable repeat (two rows)
-  ;(pattern row(1)(k(0)) row(2)(p(0)))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern row(1)(k(0)) row(2)(p(0)))))
+  
   ;; unconstrained variable repeat (multiple rows)
-  ;(pattern row(1)(k(0)) row(2)(k(0) p(1)) row(3)(p(0)) row(4)(p(0) k(1)))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern row(1)(k(0)) row(2)(k(0) p(1)) row(3)(p(0)) row(4)(p(0) k(1)))))
+  
   ;; wrong number of stitches supplied
-  ;(pattern rows(1 3 #:stitches 3)(k(0) m) rows(2 4)(k2tog))
-  ;; row numbers do not start at 1
-  ;(pattern rows(2 4)(k(1) m) rows(3 5)(k2tog))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern rows(1 3 #:stitches 3)(k(0) m) rows(2 4)(k2tog))))
+  
+  ;; row numbers do not start at 1  
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern rows(2 4)(k(1) m) rows(3 5)(k2tog))))
+  
   ;; non-conformable consecutive rows (caught in Row struct guard function)
-  ;(pattern rows(1 2)(k(0) m) rows(3)(k2tog))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern rows(1 2)(k(0) m) rows(3)(k2tog))))
+  
   ;; non-conformable consecutive rows (caught in Pattern struct guard function}
-  ;(pattern rows(1 3)(k(1) m) rows(2 4 5)(k2tog))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern rows(1 3)(k(1) m) rows(2 4 5)(k2tog))))
+  
   ;; non-consecutive row numbers
-  ;(pattern rows(1 3)(k(1) m) rows(2 5)(k2tog))
+  (check-exn
+   exn:fail?
+   (lambda ()
+     (pattern rows(1 3)(k(1) m) rows(2 5)(k2tog))))
+
+  ;; more tests using times, repeat, etc.
   )
 
-;; more tests using times, repeat, etc.
+;; end

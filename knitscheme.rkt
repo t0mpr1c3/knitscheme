@@ -4,14 +4,14 @@
 ;; FIXME yarn changes not implemented
 ;; FIXME reader/syntax tweaks not implemented (use brag?)
 ;; FIXME view/print methods not implemented
-;; FIXME Knitspeak parser not implemented
-;; FIXME Knitspeak output not implemented
+;; FIXME knitspeak parser not implemented
 ;; FIXME knitout output not implemented
 ;; FIXME CI not implemented
+;; FIXME improve error messages/exception handling
 ;; FIXME need documentation
 
 ;; FIXME is there a better way than this to set compile-time variables?
-(define _TEST_ #t)
+(define _TEST_ #f)
 
 (module knitstructs typed/racket
   (require typed/racket
@@ -57,11 +57,10 @@
           (car res))))
 
   ;; format row output
-  (: format-rows : ((Listof Natural) -> String))
+  (: format-rows : ((Listof Positive-Index) -> String))
   (define (format-rows xs)
     (let ([n (length xs)])
-      (string-append "row"
-                     (if (> n 1)
+      (string-append (if (> n 1)
                          (let-values ([(middle end) (split-at-right (cdr xs) 1)])
                            (string-append (format "s ~a" (car xs))
                                           (if (> n 2)
@@ -240,6 +239,7 @@
         (string->symbol (format "cc~a" n))))
 
   ;; define yarn symbols mc ... cc20
+  
   (define-symbolfunc mc)
   (define-syntax (define-ccns stx)
     (syntax-case stx ()
@@ -353,28 +353,37 @@
   ;; flatten tree to a list of leaves
   (: flatten-tree : (Tree -> (Listof Leaf)))
   (define (flatten-tree tree)
-    (combine (cast (flatten-tree-recurse tree) (Listof Leaf))))
+    (cast (combine (flatten-tree-recurse tree)) (Listof Leaf)))
   
-  ;; combine consecutive leaves with same stitch type into single leaf
-  (: combine : ((Listof Leaf) -> (Listof Leaf)))
-  (define (combine lst)
+  ;; recursively combine consecutive leaves with same stitch type into single leaf
+  ;; zero number elements are ignored
+  ;; FIXME an error could be raised instead
+  ;; because elsewhere 0 signifies a variable number element
+  (: combine : (Tree -> Tree))
+  (define (combine xs)
     (reverse
-     (foldl (lambda ([x : Leaf]
-                     [y : (Listof Leaf)])
-              (if (zero? (leaf-count x)) 
-                  ;; zero number elements are ignored
-                  y
-                  ;; FIXME an error could be raised instead
-                  ;; because elsewhere 0 signifies a variable number element
-                  (if (null? y)
-                      (list x)
-                      (if (equal? (leaf-stitch x) (leaf-stitch (car y)))
-                          (cons (make-leaf (cast (+ (leaf-count x) (leaf-count (car y))) Index)
-                                           (leaf-stitch x))
-                                (cdr y))
-                          (cons x y)))))
+     (foldl (lambda ([x : (U Node Leaf)]
+                     [y : Tree])
+              (if (Leaf? x)
+                  ;; leaf
+                  (if (zero? (leaf-count x))                  
+                      y ; ignored
+                      (if (null? y)
+                          (list x)
+                          (if (and
+                               (Leaf? (car y))
+                               (equal? (leaf-stitch x) (leaf-stitch (car y))))
+                              (cons (make-leaf (cast (+ (leaf-count x) (leaf-count (car y))) Index)
+                                               (leaf-stitch x))
+                                    (cdr y))
+                              (cons x y))))
+                  ;; node
+                  (if (zero? (node-count x))                  
+                      y ; ignored
+                      (cons (make-node (node-count x) (combine (node-tree x))) ; do not attempt to match nodes, only leaves
+                            y))))            
             null
-            lst))) 
+            xs)))
     
   ;; flatten every node in tree to list of leaves
   (: flatten-tree-recurse : (Tree -> Tree))
@@ -777,19 +786,20 @@
                                                        #:when (not (zero? (vector-ref var-count j))))
                                     (add1 j))])
                           ;; no constraints
-                          (error (string-append "unconstrained variable repeat in " (format-rows xs))))) 
+                          (error (string-append "unconstrained variable repeat in row" (format-rows xs))))) 
                       ;; check that consecutive rows are conformable
                       (if (and (> n-rows 1)
                                (for/or ([i (in-range 1 n-rows)])
                                  (not (= (vector-ref stitches-in-total i) (vector-ref stitches-out-total (sub1 i))))))
                           (error "pattern rows not conformable")
                           (begin
+                            ;; combine repeated stitches
                             ;; zero out fixed/var totals                          
                             (for ([i (in-range (vector-length (Rowmap-data rownums)))])
                               (let ([rowinfo-i (vector-ref rowinfo i)])
                                 (vector-set! rowinfo i
                                              (Rowinfo
-                                              (Rowinfo-stitches rowinfo-i)
+                                              (combine (Rowinfo-stitches rowinfo-i))
                                               (Rowinfo-memo rowinfo-i)
                                               (Rowinfo-stitches-in-total rowinfo-i)
                                               (Rowinfo-stitches-out-total rowinfo-i)
@@ -866,6 +876,99 @@
       (log-knitscheme-debug  (~a rowmap~))
       ;; result
       (Pattern rowinfo~ rowmap~ technology geometry startface startside gauge yarntype)))
+
+  ;; conversion to knitspeak
+
+  (: stitches->knitspeak : (Tree -> String))
+  (define (stitches->knitspeak tree)
+    (let ([str
+           (foldl
+            (lambda ([x : (U Node Leaf)]
+                     [y : String])
+              (if (Leaf? x)
+                  ;; leaf
+                  (let ([s (hash-ref stitch-hash (leaf-stitchtype x))]
+                        [n (leaf-count x)])
+                    (if (stitchtype-repeatable s)
+                        (string-append y " " (stitchtype-id s) (~a n) "," )
+                 
+                        (string-append y " " (stitchtype-id s)
+                                       (if (= n 1)
+                                           ""
+                                           (format " ~a times" n))
+                                       ",")))
+                  ;; node
+                  (let ([t (node-tree x)]
+                        [n (node-count x)])
+                    (if (= n 1)
+                        (string-append y (stitches->knitspeak t))
+                        (if (= n 2)
+                            (string-append y " [" (stitches->knitspeak t) " ] twice,")
+                            (string-append y " [" (stitches->knitspeak t) " ] " (~a n) " times,"))))))
+            ""
+            tree)])
+      (substring str 0 (sub1 (string-length str))))) ; remove trailing comma
+
+  (: pattern->knitspeak : (Pattern -> String))
+  (define (pattern->knitspeak p)
+    (let* ([row-lex (if (eq? (Pattern-geometry p) 'circular)
+                        "Round"
+                        "Row")]
+           [data (Rowmap-data (Pattern-rownums p))]
+           ;; order rowinfos by minimum row number
+           [rowinfo-pairs ((inst map (Pairof Natural Natural) Natural Natural)
+                           cons
+                           (map (lambda ([xs : (Vectorof Natural)]) (apply min (vector->list xs)))
+                                (vector->list data))
+                           (range (vector-length data)))]           
+           [rowinfo-ordered (sort rowinfo-pairs
+                                  (lambda ([x : (Pairof Natural Natural)] [y : (Pairof Natural Natural)])
+                                    (< (car x) (car y))))]   
+           [rowinfo-order ((inst map Natural (Pairof Natural Natural)) cdr rowinfo-ordered)])
+      ;; loop over rowinfos
+      (let loop ([i : Integer 0]
+                 [res : String
+                      (let ([flat : Boolean (eq? 'flat (Pattern-geometry p))]
+                            [rs : Boolean (eq? 'rs (Pattern-startface p))])
+                      (string-append "This "
+                                     (symbol->string (Pattern-technology p))
+                                     " knitting pattern is designed to be knit "
+                                     (if flat
+                                         "flat. Odd-numbered rows are"
+                                         "in the round. Every row is")
+                                     " knit on the "
+                                     (if rs "RS" "WS")
+                                     " of the piece"
+                                     (if flat
+                                       (string-append ", even-numbered rows on the " (if rs "WS" "RS"))
+                                       "")
+                                     ". The first row starts on the "
+                                     (symbol->string (Pattern-startside p))
+                                     " hand side of the pattern.\nCast on "
+                                     (~a (Rowinfo-stitches-in-total (vector-ref (Pattern-rowinfo p) 0))
+                                     " stitches"
+                                     (if flat
+                                         ""
+                                         " and join in the round")
+                                     ".\n")))])
+        (if (< i (length rowinfo-order))
+            (let* ([j (list-ref rowinfo-order i)]
+                   [rownums-j (vector->list (vector-ref data j))]
+                   [rowinfo-j (vector-ref (Pattern-rowinfo p) j)]
+                   [memo-j (Rowinfo-memo rowinfo-j)])
+              (loop (add1 i)
+                    (string-append res
+                                   row-lex
+                                   (format-rows rownums-j)
+                                   #|
+                                   (if (string=? "" memo-j)
+                                       ""
+                                       (string-append " (memo " memo-j ")"))
+                                   |# 
+                                   ":"
+                                   (stitches->knitspeak (Rowinfo-stitches rowinfo-j))
+                                   ".\n")))
+            res))))
 
   ;; end of module
   (log-knitscheme-debug "finishing knit-structs module definition"))
@@ -1323,6 +1426,14 @@
 
   ;; more tests using times, repeat, etc.
   (log-knitscheme-debug "end of tests"))
+
+  
+(define p1
+  (pattern rows(2 5)(k(1) repeat(k(1) p(1)) k(1))
+           rows(1 3 #:memo "m1")(k(3) p(3))
+           rows(7)(k2tog k2tog k2tog)
+           rows(4 6 #:memo "m4")(p)))
+(log-knitscheme-info (string-append "\n" (pattern->knitspeak p1)))
 
 (log-knitscheme-info "end of knitscheme.rkt")
 ;; end

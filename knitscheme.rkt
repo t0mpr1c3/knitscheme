@@ -1,7 +1,6 @@
 #lang knit typed/racket
 (require typed/racket)
 
-;; FIXME set up test module
 ;; FIXME yarn changes not implemented
 ;; FIXME reader/syntax tweaks not implemented (use brag?)
 ;; FIXME view/print methods not implemented
@@ -9,7 +8,6 @@
 ;; FIXME Knitspeak output not implemented
 ;; FIXME knitout output not implemented
 ;; FIXME CI not implemented
-;; FIXME need CHANGESLOG
 ;; FIXME need documentation
 
 (define _DEBUG_ #f)

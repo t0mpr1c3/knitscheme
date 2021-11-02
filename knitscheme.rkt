@@ -11,7 +11,7 @@
 ;; FIXME need documentation
 
 ;; FIXME is there a better way than this to set compile-time variables?
-(define _TEST_ #f)
+(define _TEST_ #t)
 
 (module knitstructs typed/racket
   (require typed/racket
@@ -152,8 +152,8 @@
 
   ;; recursive definition of tree
   (define-type Tree (Listof (U Node Leaf)))
-  (define-type Leaf (Pairof Index stitch)) ; repeat-count stitch
-  (define-type Node (Pairof Index Tree)) ; repeat-count repeat-content
+  (define-type Leaf (Pairof Natural stitch)) ; repeat-count stitch
+  (define-type Node (Pairof Natural Tree)) ; repeat-count repeat-content
 
   ;; variable number repeat
   (: repeat : (-> (U Node Leaf) (U Node Leaf) * Node))
@@ -161,7 +161,7 @@
     (make-node 0 xs))
 
   ;; fixed number repeat
-  (: times : (-> Index (-> (U Node Leaf) (U Node Leaf) * Node)))
+  (: times : (-> Natural (-> (U Node Leaf) (U Node Leaf) * Node)))
   (define ((times n) . xs)
     (make-node n xs))
     
@@ -256,11 +256,11 @@
   ;; leaf functions
   (define-predicate Leaf? Leaf)
 
-  (: make-leaf : (Index stitch -> Leaf))
+  (: make-leaf : (Natural stitch -> Leaf))
   (define (make-leaf n st)
     (cons n st))
   
-  (: leaf-count : (Leaf -> Index))
+  (: leaf-count : (Leaf -> Natural))
   (define (leaf-count leaf)
     (car leaf))
   
@@ -277,21 +277,21 @@
     (stitch-yarntype (leaf-stitch leaf)))
   
   ;; count stitches consumed by leaf (excluding variable repeats)
-  (: leaf-stitches-in : (Leaf -> Nonnegative-Integer))
+  (: leaf-stitches-in : (Leaf -> Natural))
   (define (leaf-stitches-in leaf)
     (* (leaf-count leaf) (stitchtype-stitches-in (hash-ref stitch-hash (leaf-stitchtype leaf)))))
 
   ;; count stitches produced by leaf (excluding variable repeats)
-  (: leaf-stitches-out : (Leaf -> Nonnegative-Integer))
+  (: leaf-stitches-out : (Leaf -> Natural))
   (define (leaf-stitches-out leaf)
     (* (leaf-count leaf) (stitchtype-stitches-out (hash-ref stitch-hash (leaf-stitchtype leaf)))))
 
   ;; node functions
-  (: make-node : (Index Tree -> Node))
+  (: make-node : (Natural Tree -> Node))
   (define (make-node n tree)
     (cons n tree))
   
-  (: node-count : (Node -> Index))
+  (: node-count : (Node -> Natural))
   (define (node-count node)
     (car node))
   
@@ -304,10 +304,10 @@
   (define (make-tree . xs) xs)
 
   ;; count (non-nested) variable repeats in tree
-  (: tree-count-var : (Tree -> Nonnegative-Integer))
+  (: tree-count-var : (Tree -> Natural))
   (define (tree-count-var tree)
     (foldl (lambda ([x : (U Node Leaf)]
-                    [y : Nonnegative-Integer])
+                    [y : Natural])
              (if (Leaf? x)
                  (if (zero? (leaf-count x))
                      (add1 y)
@@ -321,21 +321,21 @@
 
   ;; obtain (leftmost non-nested) variable repeat from tree
   ;; or return #f if no variable repeat
-  (: tree-var : (Tree -> (U Tree False)))
-  (define (tree-var tree)
-    (for/or : (U Tree False) ([i (in-range (length tree))])
+  (: tree-var : (->* (Tree) (Natural) (U False (Pairof Tree Natural))))
+  (define (tree-var tree [multiplier 1])
+    (for/or : (U False (Pairof Tree Natural)) ([i (in-range (length tree))])
       (let ([x : (U Node Leaf) (list-ref tree i)])
         (if (Leaf? x)
             (if (zero? (leaf-count x))
-                (make-tree (make-leaf 1 (leaf-stitch x)))
+                (cons (make-tree (make-leaf 1 (leaf-stitch x))) multiplier)
                 #f)
             (if (zero? (node-count x))
-                (make-tree (make-node 1 (node-tree x)))
-                (tree-var (node-tree x)))))))
+                (cons (make-tree (make-node 1 (node-tree x))) multiplier)
+                (tree-var (node-tree x) (* multiplier (node-count x))))))))
 
   ;; replace variable repeat(s) in tree with fixed integer value
   ;; if there are nested repeats, only the lowest will be replaced
-  (: tree-var-replace : (Tree Index -> Tree))
+  (: tree-var-replace : (Tree Natural -> Tree))
   (define (tree-var-replace tree r) : Tree
     (reverse
      (foldl (lambda ([x : (U Node Leaf)]
@@ -475,9 +475,11 @@
                                       0
                                       0)))
                       ;; one variable repeat
-                      (let* ([flat-var (flatten-tree (tree-var stitches))]
-                             [stitches-in-var~ (sum (map leaf-stitches-in flat-var))]
-                             [stitches-out-var~ (sum (map leaf-stitches-out flat-var))])                        
+                      (let* ([var (tree-var stitches)]
+                             [var-multiplier (cdr var)]
+                             [flat-var (flatten-tree (car var))]
+                             [stitches-in-var~ (* var-multiplier (sum (map leaf-stitches-in flat-var)))]
+                             [stitches-out-var~ (* var-multiplier (sum (map leaf-stitches-out flat-var)))])
                         (if (not (zero? stitches-out-total))
                             ;; #:stitches has been specified
                             ;; check that variable number repeat can be replaced by fixed value
@@ -930,27 +932,27 @@
                  [res : String
                       (let ([flat : Boolean (eq? 'flat (Pattern-geometry p))]
                             [rs : Boolean (eq? 'rs (Pattern-startface p))])
-                      (string-append "This "
-                                     (symbol->string (Pattern-technology p))
-                                     " knitting pattern is designed to be knit "
-                                     (if flat
-                                         "flat. Odd-numbered rows are"
-                                         "in the round. Every row is")
-                                     " knit on the "
-                                     (if rs "RS" "WS")
-                                     " of the piece"
-                                     (if flat
-                                       (string-append ", even-numbered rows on the " (if rs "WS" "RS"))
-                                       "")
-                                     ". The first row starts on the "
-                                     (symbol->string (Pattern-startside p))
-                                     " hand side of the pattern.\nCast on "
-                                     (~a (Rowinfo-stitches-in-total (vector-ref (Pattern-rowinfo p) 0))
-                                     " stitches"
-                                     (if flat
-                                         ""
-                                         " and join in the round")
-                                     ".\n")))])
+                        (string-append "This "
+                                       (symbol->string (Pattern-technology p))
+                                       " knitting pattern is designed to be knit "
+                                       (if flat
+                                           "flat. Odd-numbered rows are"
+                                           "in the round. Every row is")
+                                       " knit on the "
+                                       (if rs "RS" "WS")
+                                       " of the piece"
+                                       (if flat
+                                           (string-append ", even-numbered rows on the " (if rs "WS" "RS"))
+                                           "")
+                                       ". The first row starts on the "
+                                       (symbol->string (Pattern-startside p))
+                                       " hand side of the pattern.\nCast on "
+                                       (~a (Rowinfo-stitches-in-total (vector-ref (Pattern-rowinfo p) 0))
+                                           " stitches"
+                                           (if flat
+                                               ""
+                                               " and join in the round")
+                                           ".\n")))])
         (if (< i (length rowinfo-order))
             (let* ([j (list-ref rowinfo-order i)]
                    [rownums-j (vector->list (vector-ref data j))]
@@ -1088,10 +1090,10 @@
     
   (check-equal?
    (tree-var t1)
-   '((1
-      (1 . #s(stitch 111 0))
-      (3 (2 . #s(stitch 84 0)))
-      (2 . #s(stitch 111 0)))))
+   '(((1
+       (1 . #s(stitch 111 0))
+       (3 (2 . #s(stitch 84 0)))
+       (2 . #s(stitch 111 0)))) . 1))
 
   
   (define t2
@@ -1118,7 +1120,7 @@
    
   (check-equal?
    (tree-var t2)   
-   '((1 . #s(stitch 112 0))))
+   '(((1 . #s(stitch 112 0))) . 1))
   
   ;; tests of `rows` constructor
   (log-knitscheme-debug "start of tests of `rows` constructor")
@@ -1207,6 +1209,22 @@
      (Rowinfo
       '((1 . #s(stitch 85 0))) "" 2 1 0 0 0 0))
     (Rowmap '#(#(1 3) #(2 4)) 4)
+    'machine
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
+
+  ;; variable repeat leaf nested in node, number of stitches supplied
+  (check-equal?
+   (pattern rows(1 #:stitches 9)(x3(k(1) p)))
+   (Pattern
+    (vector
+     (Rowinfo
+      '((3 (1 . #s(stitch 107 0))
+           (2 . #s(stitch 112 0)))) "" 9 9 0 0 0 0))
+    (Rowmap '#(#(1)) 1)
     'machine
     'flat
     'rs

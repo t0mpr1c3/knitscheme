@@ -10,15 +10,20 @@
 ;; FIXME CI not implemented
 ;; FIXME need documentation
 
-(define _DEBUG_ #f)
+;; FIXME is there a better way than this to set compile-time variables?
 (define _TEST_ #t)
 
-(module knit-structs typed/racket
+(module knitstructs typed/racket
   (require typed/racket
            racket/list) ; needed for `flatten`, `range`
   (provide (all-defined-out))
-  
-  (define _DEBUG_MODULE_ #f)
+
+  ;; define knitscheme-logger for debugging purposes
+  ;; set knitscheme-receiver level to 'debug for verbose output
+  (define-logger knitscheme)
+  (define knitscheme-receiver (make-log-receiver knitscheme-logger 'info)) 
+  (log-knitscheme-info "knitscheme-logger initialized")
+  (log-knitscheme-debug "starting knit-structs module definition")
  
   ;; restrict list to unique elements
   (: uniq : (All (A) (Listof A) -> (Listof A)))
@@ -425,21 +430,12 @@
              stitches-out-fixed
              stitches-in-var
              stitches-out-var
-             type-name)
+             type-name)      
+      (log-knitscheme-debug "in `Row` struct guard function")
       ;; flatten and sort list of row numbers
       (let ([rownums~ (sort ((inst uniq (Listof Positive-Index)) (flatten rownums)) <)]
             [var-count (tree-count-var stitches)]
             [flat (flatten-tree stitches)])
-        (when _DEBUG_MODULE_
-          (displayln "In struct Rows")
-          (displayln (~a rownums))
-          (displayln (~a stitches))
-          (displayln (~a stitches-in-total))
-          (displayln (~a stitches-out-total))
-          (displayln (~a stitches-in-fixed))
-          (displayln (~a stitches-out-fixed))
-          (displayln (~a stitches-in-var))
-          (displayln (~a stitches-out-var)))
         ;; check valid row numbers exist
         (if (zero? (length rownums~))
             (error "no row numbers specified")
@@ -547,6 +543,7 @@
   (: rows : (->* () (#:memo String #:stitches Nonnegative-Integer) #:rest (U Positive-Index (Listof Positive-Index)) 
                  (-> (U Leaf Node) (U Leaf Node) * Rows)))
   (define ((rows #:memo [memo : String ""] #:stitches [stitches-out-total : Nonnegative-Integer 0] . rownums) . tree)
+    (log-knitscheme-debug "in `rows` constructor")
     (Rows
      (cast (flatten rownums) (Listof Positive-Index))
      tree
@@ -580,9 +577,10 @@
     Rowmap
     ([data : (Immutable-Vectorof (Immutable-Vectorof Positive-Index))]
      [rowcount : Positive-Integer])
-    #:guard
+    #:guard  
     ;; check validity of row numbers
     (lambda (data rowcount type-name)
+      (log-knitscheme-debug "in `Rowmap` struct guard function")  
       (let ([fl : (Listof Positive-Index) (vector->list (apply vector-append (vector->list data)))])
         (if (> (apply min fl) 1)
             (error "row numbers must start at 1")
@@ -629,8 +627,7 @@
      [yarntype : (Immutable-Vectorof (Option yarntype))])
     #:guard
     (lambda (rowinfo rownums technology geometry startface startside gauge yarntype type-name)
-      (when _DEBUG_MODULE_
-        (displayln "In struct Pattern"))
+      (log-knitscheme-debug "in `Pattern` struct guard function")
       ;; circular for hand knits only
       (if (and
            (eq? technology 'machine)
@@ -647,16 +644,14 @@
                   [var-count ((inst make-vector Natural) n-rows 0)]
                   [var-count-total-initial ((inst box Natural) 0)]
                   [var-count-total-final ((inst box Natural) 0)])
-              (set-box! var-count-total-initial (* 99 n-rows)) ; set to large number initially
+              (set-box! var-count-total-initial (* 1000 n-rows)) ; set to large number initially
               ;; do-loop alternates constraining adjacent rows and constraining variable repeats
               ;; until no further progress is made
               (let do-loop ()
-                (when _DEBUG_MODULE_
-                  (displayln (~a rowinfo))
-                  (displayln (~a rownums)))
-                (when _DEBUG_MODULE_
-                  (displayln (~a stitches-in-total))
-                  (displayln (~a stitches-out-total)))
+                (log-knitscheme-debug (~a rowinfo))
+                (log-knitscheme-debug (~a rownums))
+                (log-knitscheme-debug (format "stitches-in-total ~a" stitches-in-total))
+                (log-knitscheme-debug (format "stitches-out-total ~a" stitches-out-total))
                 ;; update vectors of stitch totals
                 (for ([i (in-range (vector-length (Rowmap-data rownums)))])
                   (let ([rowinfo-i (vector-ref rowinfo i)]
@@ -676,9 +671,8 @@
                         (vector-set! stitches-out-var (sub1 (vector-ref rownums-i j)) stitches-out-var-row-i)
                         (vector-set! var-count (sub1 (vector-ref rownums-i j)) var-count-row-i)))))
                 (set-box! var-count-total-final (sum (vector->list var-count)))
-                (when _DEBUG_MODULE_
-                  (displayln (~a (unbox var-count-total-initial)))
-                  (displayln (~a (unbox var-count-total-final))))
+                (log-knitscheme-debug (format "var-count-total-initial ~a" (unbox var-count-total-initial)))
+                (log-knitscheme-debug (format "var-count-total-final ~a" (unbox var-count-total-final)))
                 ;; loop continuation expression
                 (if (> (unbox var-count-total-initial)
                        (unbox var-count-total-final))
@@ -708,9 +702,8 @@
                               (when (not (= (vector-ref stitches-in-total i)
                                             (vector-ref stitches-out-total j)))
                                 (error (format "pattern rows ~a and ~a are not conformable" i (add1 i)))))))
-                      (when _DEBUG_MODULE_
-                        (displayln (~a stitches-in-total))
-                        (displayln (~a stitches-out-total)))
+                      (log-knitscheme-debug (format "stitches-in-total ~a" stitches-in-total))
+                      (log-knitscheme-debug (format "stitches-out-total ~a" stitches-out-total))
                       ;; constrain variable repeats
                       (for ([j (in-range n-rows)])
                         (let ([i (add1 j)]
@@ -835,6 +828,7 @@
            #:gauge [gauge : (Option Gauge) #f]
            #:yarntype [yarntype : (Immutable-Vectorof (Option yarntype)) (vector-immutable #f)]
            . rows)
+    (log-knitscheme-debug "in `pattern` constructor")
     (let ([rowinfo~
            (list->vector
             (reverse
@@ -867,20 +861,27 @@
                       null
                       rows))))
             1)])
-      (when _DEBUG_MODULE_
-        (displayln "In function pattern")
-        (displayln (~a rows))
-        (displayln (~a rowinfo~))
-        (displayln (~a rowmap~)))
+      (log-knitscheme-debug (~a rows))
+      (log-knitscheme-debug  (~a rowinfo~))
+      (log-knitscheme-debug  (~a rowmap~))
       ;; result
       (Pattern rowinfo~ rowmap~ technology geometry startface startside gauge yarntype)))
 
   ;; end of module
-  )
+  (log-knitscheme-debug "finishing knit-structs module definition"))
 
-(require (submod "." knit-structs))
+(require (submod "." knitstructs))
+
+;; set up thread to print output from log receiver
+(void 
+ (thread 
+  (lambda () (let sync-loop () 
+               (define v (sync knitscheme-receiver))
+               (printf "[~a] ~a\n" (vector-ref v 0) (vector-ref v 1)) 
+               (sync-loop)))))
 
 ; macro definitions
+(log-knitscheme-debug "start of macro definitions")
 
 (define-syntax-rule (define-variable-repeat-stitch id st)
   (define-syntax (id stx)
@@ -942,7 +943,11 @@
   
 (when _TEST_
 
-  ;; tests of Tree functions
+  
+  (log-knitscheme-debug "start of tests")
+
+  ;; tests of tree functions
+  (log-knitscheme-debug "start of tests of tree functions")
   
   (define t1
     (make-tree (make-leaf 2 (stitch #x70 0))
@@ -1013,6 +1018,7 @@
    '((1 . #s(stitch 112 0))))
   
   ;; tests of `rows` constructor
+  (log-knitscheme-debug "start of tests of `rows` constructor")
   
   ;; rows not consecutive
   (check-equal?
@@ -1066,6 +1072,7 @@
      rows(null)((list-ref t1 0))))
   
   ;; tests of `pattern` constructor
+  (log-knitscheme-debug "start of tests of `pattern` constructor")
   
   ;; keywords, single row
   (check-equal?
@@ -1308,13 +1315,14 @@
    (lambda ()
      (pattern rows(1 3)(k(1) m) rows(2 4 5)(k2tog))))
   
-  ;; non-consecutive row numbers
+  ;; non-consecutive row numbers (caught in Rowmap struct guard function}
   (check-exn
    exn:fail?
    (lambda ()
      (pattern rows(1 3)(k(1) m) rows(2 5)(k2tog))))
 
   ;; more tests using times, repeat, etc.
-  )
+  (log-knitscheme-debug "end of tests"))
 
+(log-knitscheme-info "end of knitscheme.rkt")
 ;; end

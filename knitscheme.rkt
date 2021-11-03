@@ -24,7 +24,7 @@
   (define knitscheme-receiver (make-log-receiver knitscheme-logger 'info)) 
   (log-knitscheme-info "knitscheme-logger initialized")
   (log-knitscheme-debug "starting knit-structs module definition")
- 
+
   ;; restrict list to unique elements
   (: uniq : (All (A) (Listof A) -> (Listof A)))
   (define (uniq [xs : (Listof A)])
@@ -71,10 +71,10 @@
                                               "")
                                           (format " and ~a" (car end))))
                          (format " ~a" (car xs))))))
-  
+
   ;; stitch definitions
   ;; NB symbols are based on Stitchmastery Dash font
- 
+
   ;; type of stitch
   (struct stitchtype
     ([rs-symbol : Byte]
@@ -134,7 +134,7 @@
     (for/hash : (HashTable Byte stitchtype) ([i (in-range (length stitch-list))])
       (values (stitchtype-rs-symbol (list-ref stitch-list i))
               (list-ref stitch-list i))))
-  
+
   ;; stitch struct
   (struct stitch
     ([stitchtype : Byte]
@@ -144,7 +144,7 @@
   (: stitch->char : (stitch -> Char))
   (define (stitch->char st)
     (integer->char (stitch-stitchtype st)))
-  
+
   ;; stitch information in each row is encoded in a tree structure:
   ;; leaf data = sequence of stitches
   ;; node data = number of repeats
@@ -164,7 +164,7 @@
   (: times : (-> Natural (-> (U Node Leaf) (U Node Leaf) * Node)))
   (define ((times n) . xs)
     (make-node n xs))
-    
+
   ;; aliases for small number repeats
   (define once (times 1))
   (define twice (times 2))
@@ -201,10 +201,10 @@
         [z : Positive-Index]) (cast (range x (add1 y) z) (Listof Positive-Index))]
       [else (error "Error in defining sequence")]))
   (define seq sequence)
-  
+
 
   ;; macro definitions
-  
+
   (begin-for-syntax
     (require racket/list ; needed for `range`
              racket/syntax)) ; needed for `format-id`
@@ -239,7 +239,7 @@
         (string->symbol (format "cc~a" n))))
 
   ;; define yarn symbols mc ... cc20
-  
+
   (define-symbolfunc mc)
   (define-syntax (define-ccns stx)
     (syntax-case stx ()
@@ -251,19 +251,19 @@
   (define-ccns)
 
   ;; end of macro definitions
-  
-  
+
+
   ;; leaf functions
   (define-predicate Leaf? Leaf)
 
   (: make-leaf : (Natural stitch -> Leaf))
   (define (make-leaf n st)
     (cons n st))
-  
+
   (: leaf-count : (Leaf -> Natural))
   (define (leaf-count leaf)
     (car leaf))
-  
+
   (: leaf-stitch : (Leaf -> stitch))
   (define (leaf-stitch leaf)
     (cdr leaf))
@@ -275,7 +275,7 @@
   (: leaf-yarntype : (Leaf -> Byte))
   (define (leaf-yarntype leaf)
     (stitch-yarntype (leaf-stitch leaf)))
-  
+
   ;; count stitches consumed by leaf (excluding variable repeats)
   (: leaf-stitches-in : (Leaf -> Natural))
   (define (leaf-stitches-in leaf)
@@ -290,11 +290,11 @@
   (: make-node : (Natural Tree -> Node))
   (define (make-node n tree)
     (cons n tree))
-  
+
   (: node-count : (Node -> Natural))
   (define (node-count node)
     (car node))
-  
+
   (: node-tree : (Node -> Tree))
   (define (node-tree node)
     (cdr node))
@@ -349,18 +349,13 @@
                       (cons (make-node (node-count x) (tree-var-replace (node-tree x) r)) y))))
             (cast null Tree)
             tree)))
-  
-  ;; flatten tree to a list of leaves
-  (: flatten-tree : (Tree -> (Listof Leaf)))
-  (define (flatten-tree tree)
-    (cast (combine (flatten-tree-recurse tree)) (Listof Leaf)))
-  
+
   ;; recursively combine consecutive leaves with same stitch type into single leaf
   ;; zero number elements are ignored
   ;; FIXME an error could be raised instead
   ;; because elsewhere 0 signifies a variable number element
-  (: combine : (Tree -> Tree))
-  (define (combine xs)
+  (: combine-breadth : (Tree -> Tree))
+  (define (combine-breadth xs)
     (reverse
      (foldl (lambda ([x : (U Node Leaf)]
                      [y : Tree])
@@ -368,23 +363,52 @@
                   ;; leaf
                   (if (zero? (leaf-count x))                  
                       y ; ignored
-                      (if (null? y)
-                          (list x)
-                          (if (and
-                               (Leaf? (car y))
-                               (equal? (leaf-stitch x) (leaf-stitch (car y))))
-                              (cons (make-leaf (cast (+ (leaf-count x) (leaf-count (car y))) Index)
-                                               (leaf-stitch x))
-                                    (cdr y))
-                              (cons x y))))
+                      (if (and
+                           (not (null? y))
+                           (Leaf? (car y))
+                           (equal? (leaf-stitch x) (leaf-stitch (car y))))
+                          (cons (make-leaf (+ (leaf-count x) (leaf-count (car y)))
+                                           (leaf-stitch x))
+                                (cdr y))
+                          (cons x y)))
                   ;; node
                   (if (zero? (node-count x))                  
                       y ; ignored
-                      (cons (make-node (node-count x) (combine (node-tree x))) ; do not attempt to match nodes, only leaves
+                      (cons (make-node (node-count x)
+                                       (combine-breadth (node-tree x))) ; match only leaves, not nodes
                             y))))            
             null
             xs)))
-    
+
+  ;; recursively combine singleton node/leaf nested node
+  ;; assumes no zero number elements
+  ;; FIXME an error could be raised instead
+  (: combine-depth : (Tree -> Tree))
+  (define (combine-depth xs)
+    (reverse
+     (foldl (lambda ([x : (U Node Leaf)]
+                     [y : Tree])
+              (if (Leaf? x)
+                  ;; leaf
+                  (cons x y)
+                  ;; node
+                  (if (= 1 (length (node-tree x)))
+                      (let ([nested (car (node-tree x))])
+                        (if (Leaf? nested)
+                            ;; leaf
+                            (cons (make-leaf (* (node-count x) (leaf-count nested))
+                                             (leaf-stitch nested))
+                                  y)
+                            ;; node
+                            (cons (car (combine-depth (list (make-node (* (node-count x) (node-count nested))
+                                                                       (node-tree nested)))))
+                                  y)))
+                      (cons (make-node (node-count x)
+                                       (combine-depth (node-tree x)))
+                            y))))
+            null
+            xs)))
+
   ;; flatten every node in tree to list of leaves
   (: flatten-tree-recurse : (Tree -> Tree))
   (define (flatten-tree-recurse tree)
@@ -399,11 +423,18 @@
                           y)))
             (cast null Tree)
             tree)))
-  
+
+  ;; flatten tree to a list of leaves
+  (: flatten-tree : (Tree -> (Listof Leaf)))
+  (define (flatten-tree tree)
+    (cast (combine (flatten-tree-recurse tree)) (Listof Leaf)))
+
+  (define combine (compose1 combine-depth combine-breadth))
+
   ;; define data structs
 
   ;; non-empty list
- 
+
   ;; yarn
   (struct yarntype
     ([brand : String]
@@ -411,13 +442,13 @@
      [weight : String]
      [color : String])
     #:prefab)
-  
+
   (: consecutive-rows : (-> (Listof Positive-Index) Boolean))
   (define (consecutive-rows rownums)
     (and
      (> (length rownums) 1)
      (= 1 (apply min (diff - rownums)))))
-                            
+
   ;; row struct
   (struct Rows
     ([rownums : (Listof Positive-Index)]
@@ -466,7 +497,7 @@
                               (error "consecutive rows are not conformable")
                               ;; result
                               (values rownums~
-                                      stitches
+                                      (combine stitches)
                                       memo
                                       stitches-in-fixed~
                                       stitches-out-fixed~
@@ -580,12 +611,11 @@
      [stitches-in-var : Natural]     ; and subsequently
      [stitches-out-var : Natural])   ; set to zero
     #:transparent)
-  
+
   ;; 2D vector:
   ;; D1: rowinfo index
   ;; D2: vector of row numbers (1-indexed)
-  (struct
-    Rowmap
+  (struct Rowmap
     ([data : (Immutable-Vectorof (Immutable-Vectorof Positive-Index))]
      [rowcount : Positive-Integer])
     #:guard  
@@ -616,7 +646,7 @@
      (vector-map
       (lambda ([rs : (Vectorof Positive-Index)]) (vector-memq r rs))
       (Rowmap-data rowmap))))
-  
+
   ;; gauge
   (struct Gauge
     ([st-count-x : Positive-Float]
@@ -625,7 +655,7 @@
      [measurement-y : Positive-Float]
      [unit : (U 'cm 'inch)])
     #:prefab)
-  
+
   ;; pattern struct
   (struct Pattern
     ([rowinfo : (Vectorof Rowinfo)]
@@ -795,7 +825,7 @@
                                  (not (= (vector-ref stitches-in-total i) (vector-ref stitches-out-total (sub1 i))))))
                           (error "pattern rows not conformable")
                           (begin
-                            ;; combine repeated stitches
+                            ;; combine repeated stitches / nested singletons
                             ;; zero out fixed/var totals                          
                             (for ([i (in-range (vector-length (Rowmap-data rownums)))])
                               (let ([rowinfo-i (vector-ref rowinfo i)])
@@ -822,7 +852,7 @@
               (vector-set! res (sub1 (vector-ref rownums-i j)) f-row-i)))))
       res))
   |#
-  
+
   ;; alternative constructor
   (: pattern : (->* () (#:technology (U 'hand 'machine)
                         #:geometry (U 'flat 'circular)
@@ -1043,24 +1073,23 @@
 (define-unrepeatable-stitch w&t     (hash-ref stitch-hash #x50))
 
 ;; tests
-  
+
 (require typed/rackunit)
-  
+
 (when _TEST_
 
-  
   (log-knitscheme-debug "start of tests")
 
   ;; tests of tree functions
   (log-knitscheme-debug "start of tests of tree functions")
-  
+
   (define t1
     (make-tree (make-leaf 2 (stitch #x70 0))
                (make-node 0 (make-tree (make-leaf 1 (stitch #x6f 0))
                                        (make-node 3 (make-tree (make-leaf 2 (stitch #x54 0))))
                                        (make-leaf 2 (stitch #x6f 0))))
                (make-leaf 3 (stitch #x6a 0))))
-  
+
   (check-equal?
    t1
    '((2 . #s(stitch 112 0))
@@ -1069,12 +1098,12 @@
       (3 (2 . #s(stitch 84 0)))
       (2 . #s(stitch 111 0)))
      (3 . #s(stitch 106 0))))
-  
+
   (check-equal?
    (flatten-tree t1)
    '((2 . #s(stitch 112 0))
      (3 . #s(stitch 106 0))))
-   
+
   (check-equal?
    (tree-var-replace t1 2)   
    '((2 . #s(stitch 112 0))
@@ -1087,7 +1116,7 @@
   (check-equal?
    (tree-count-var t1)
    1)
-    
+
   (check-equal?
    (tree-var t1)
    '(((1
@@ -1095,36 +1124,56 @@
        (3 (2 . #s(stitch 84 0)))
        (2 . #s(stitch 111 0)))) . 1))
 
-  
   (define t2
     (make-tree (make-leaf 0 (stitch #x70 0))
                (make-leaf 0 (stitch #x6f 0))))
-  
+
   (check-equal?
    t2
    '((0 . #s(stitch 112 0))
      (0 . #s(stitch 111 0))))
-  
+
   (check-equal?
    (flatten-tree t2)
    '())
-   
+
   (check-equal?
    (tree-var-replace t2 2)   
    '((2 . #s(stitch 112 0))
      (2 . #s(stitch 111 0))))
-   
+
   (check-equal?
    (tree-count-var t2)
    2)
-   
+
   (check-equal?
    (tree-var t2)   
    '(((1 . #s(stitch 112 0))) . 1))
-  
+
   ;; tests of `rows` constructor
   (log-knitscheme-debug "start of tests of `rows` constructor")
-  
+
+  ;; no variable repeats, combine adjacent leaves
+  (check-equal?
+   rows(1)(k(1) k(1))
+   (Rows
+    '(1)
+    '((2 . #s(stitch 107 0))) "" 2 2 2 2 0 0))
+
+  ;; no variable repeats, combine leaf in singleton node
+  (check-equal?
+   rows(1)(x2(k(1)))
+   (Rows
+    '(1)
+    '((2 . #s(stitch 107 0))) "" 2 2 2 2 0 0))
+
+  ;; no variable repeats, multiple simplifications
+  (check-equal?
+   rows(1)(x2(x3(x4(k(1) k(1)))))
+   (Rows
+    '(1)
+    '((48 . #s(stitch 107 0))) "" 48 48 48 48 0 0))
+
   ;; rows not consecutive
   (check-equal?
    rows(1 3)((list-ref t1 0)
@@ -1132,7 +1181,7 @@
    (Rows
     '(1 3)
     '((2 . #s(stitch 112 0)) (3 . #s(stitch 106 0))) "" 11 5 11 5 0 0))
-  
+
   ;; consecutive and conformable
   (check-equal?
    rows(1 2)((list-ref t1 0)
@@ -1140,7 +1189,7 @@
    (Rows
     '(1 2)
     '((2 . #s(stitch 112 0)) (2 . #s(stitch 112 0))) "" 4 4 4 4 0 0))
-  
+
   ;; consecutive and conformable
   (check-equal?
    rows('(1 2) '(1) #:memo "new memo")((list-ref t1 0)
@@ -1154,14 +1203,14 @@
        (3 (2 . #s(stitch 84 0)))
        (2 . #s(stitch 111 0)))
       (3 . #s(stitch 106 0))) "new memo"  0 0 11 5 6 3))
-  
+
   ;; consecutive but not conformable   
   (check-exn
    exn:fail?
    (lambda ()
      rows(1 2)((list-ref t1 0)
                (list-ref t1 2))))
-  
+
   ;; consecutive but not conformable
   (check-exn
    exn:fail?
@@ -1169,16 +1218,16 @@
      rows(1 2)((list-ref t1 0)
                (list-ref t1 1)
                (make-leaf 1 (stitch #x6a 0)))))
-  
+
   ;; no row numbers
   (check-exn
    exn:fail?
    (lambda ()
      rows(null)((list-ref t1 0))))
-  
+
   ;; tests of `pattern` constructor
   (log-knitscheme-debug "start of tests of `pattern` constructor")
-  
+
   ;; keywords, single row
   (check-equal?
    (pattern #:technology 'hand #:startface 'ws #:startside 'left rows(1 #:memo "memo")(k(1)))
@@ -1191,7 +1240,7 @@
     'left
     #f
     '#(#f)))
-    
+
   ;; machine knits cannot be circular
   (check-exn
    exn:fail?
@@ -1248,7 +1297,7 @@
     'right
     #f
     '#(#f)))
-  
+
   ;; variable repeat node, number of stitches supplied
   (check-equal?
    (pattern #:technology 'hand #:geometry 'flat
@@ -1271,7 +1320,7 @@
     'right
     #f
     '#(#f)))
-  
+
   ;; repeated application of constraints
   (check-equal?
    (pattern #:technology 'hand #:geometry 'flat
@@ -1304,7 +1353,7 @@
     'right
     #f
     '#(#f)))
-  
+
   ;; repeated application of constraints, last line outputs zero stitches
   (check-equal?
    (pattern #:technology 'hand #:geometry 'flat
@@ -1339,7 +1388,7 @@
     'right
     #f
     '#(#f)))
-  
+
   ;; constrained by stitches out
   (check-equal?
    (pattern rows(1)(k(0) m) rows(2)(k2tog))
@@ -1357,7 +1406,7 @@
     'right
     #f
     '#(#f)))
-  
+
   ;; constrained by stitches in
   (check-equal?
    (pattern rows(1)(k2tog) rows(2)(k(0) m))
@@ -1375,7 +1424,7 @@
     'right
     #f
     '#(#f)))
-  
+
   ;; constrained by both stitches in and stitches out
   (check-equal?
    (pattern rows(1 3 5)(k2tog) rows(2 4)(k(0) m))
@@ -1393,49 +1442,49 @@
     'right
     #f
     '#(#f)))
-  
+
   ;; unconstrained variable repeat (single row)
   (check-exn
    exn:fail?
    (lambda ()
      (pattern row(1)(k(0)))))
-  
+
   ;; unconstrained variable repeat (two rows)
   (check-exn
    exn:fail?
    (lambda ()
      (pattern row(1)(k(0)) row(2)(p(0)))))
-  
+
   ;; unconstrained variable repeat (multiple rows)
   (check-exn
    exn:fail?
    (lambda ()
      (pattern row(1)(k(0)) row(2)(k(0) p(1)) row(3)(p(0)) row(4)(p(0) k(1)))))
-  
+
   ;; wrong number of stitches supplied
   (check-exn
    exn:fail?
    (lambda ()
      (pattern rows(1 3 #:stitches 3)(k(0) m) rows(2 4)(k2tog))))
-  
+
   ;; row numbers do not start at 1  
   (check-exn
    exn:fail?
    (lambda ()
      (pattern rows(2 4)(k(1) m) rows(3 5)(k2tog))))
-  
+
   ;; non-conformable consecutive rows (caught in Row struct guard function)
   (check-exn
    exn:fail?
    (lambda ()
      (pattern rows(1 2)(k(0) m) rows(3)(k2tog))))
-  
+
   ;; non-conformable consecutive rows (caught in Pattern struct guard function}
   (check-exn
    exn:fail?
    (lambda ()
      (pattern rows(1 3)(k(1) m) rows(2 4 5)(k2tog))))
-  
+
   ;; non-consecutive row numbers (caught in Rowmap struct guard function}
   (check-exn
    exn:fail?
@@ -1450,7 +1499,7 @@
   (pattern rows(2 5)(k(1) repeat(k(1) p(1)) k(1))
            rows(1 3 #:memo "m1")(k(3) p(3))
            rows(7)(k2tog k2tog k2tog)
-           rows(4 6 #:memo "m4")(p)))
+           rows(4 6 #:memo "m4")(x2(x3(p)))))
 (log-knitscheme-info (string-append "\n" (pattern->knitspeak p1)))
 
 (log-knitscheme-info "end of knitscheme.rkt")

@@ -231,25 +231,6 @@
   (define-symbolfunc rs)
   (define-symbolfunc ws)
 
-  ;; yarn symbol generator
-  (: yarn : (Byte -> Symbol))
-  (define (yarn n)
-    (if (zero? n)
-        'mc
-        (string->symbol (format "cc~a" n))))
-
-  ;; define yarn symbols mc ... cc20
-
-  (define-symbolfunc mc)
-  (define-syntax (define-ccns stx)
-    (syntax-case stx ()
-      [(_) (let ([ccn-id (lambda (i) (format-id stx "cc~a" i))])
-             (with-syntax ([((n ccn) ...) (map (lambda (j) (list j (ccn-id j))) (range 1 21))])
-               #'(begin
-                   (define ccn (yarn n))
-                   ...)))]))
-  (define-ccns)
-
   ;; end of macro definitions
 
 
@@ -309,9 +290,11 @@
     (foldl (lambda ([x : (U Node Leaf)]
                     [y : Natural])
              (if (Leaf? x)
+                 ;; leaf
                  (if (zero? (leaf-count x))
                      (add1 y)
                      y)
+                 ;; node
                  (if (zero? (node-count x))
                      (add1 y)
                      ;(+ 1 y (tree-count-var (node-tree x)))
@@ -326,9 +309,11 @@
     (for/or : (U False (Pairof Tree Natural)) ([i (in-range (length tree))])
       (let ([x : (U Node Leaf) (list-ref tree i)])
         (if (Leaf? x)
+            ;; leaf
             (if (zero? (leaf-count x))
                 (cons (make-tree (make-leaf 1 (leaf-stitch x))) multiplier)
                 #f)
+            ;; node
             (if (zero? (node-count x))
                 (cons (make-tree (make-node 1 (node-tree x))) multiplier)
                 (tree-var (node-tree x) (* multiplier (node-count x))))))))
@@ -341,9 +326,11 @@
      (foldl (lambda ([x : (U Node Leaf)]
                      [y : Tree])
               (if (Leaf? x)
+                  ;; leaf
                   (if (zero? (leaf-count x))
                       (cons (make-leaf r (leaf-stitch x)) y)
                       (cons x y))
+                  ;; node
                   (if (zero? (node-count x))
                       (cons (make-node r (node-tree x)) y)
                       (cons (make-node (node-count x) (tree-var-replace (node-tree x) r)) y))))
@@ -351,7 +338,7 @@
             tree)))
 
   ;; recursively combine consecutive leaves with same stitch type into single leaf
-  ;; zero number elements are ignored
+  ;; zero number elements are eliminated
   ;; FIXME an error could be raised instead
   ;; because elsewhere 0 signifies a variable number element
   (: combine-breadth : (Tree -> Tree))
@@ -361,27 +348,30 @@
                      [y : Tree])
               (if (Leaf? x)
                   ;; leaf
-                  (if (zero? (leaf-count x))                  
-                      y ; ignored
-                      (if (and
-                           (not (null? y))
-                           (Leaf? (car y))
-                           (equal? (leaf-stitch x) (leaf-stitch (car y))))
-                          (cons (make-leaf (+ (leaf-count x) (leaf-count (car y)))
-                                           (leaf-stitch x))
-                                (cdr y))
-                          (cons x y)))
+                  (let ([n (leaf-count x)])
+                    (if (zero? n)                  
+                        y ; eliminated
+                        (if (null? y)
+                            (cons x y)
+                            (let ([h (car y)])
+                              (if (not (Leaf? h))
+                                  (cons x y)
+                                  (let ([s (leaf-stitch x)])
+                                    (if (equal? s (leaf-stitch h))
+                                        (cons (make-leaf (+ n (leaf-count h)) s)
+                                              (cdr y))
+                                        (cons x y))))))))
                   ;; node
-                  (if (zero? (node-count x))                  
-                      y ; ignored
-                      (cons (make-node (node-count x)
-                                       (combine-breadth (node-tree x))) ; match only leaves, not nodes
-                            y))))            
+                  (let ([n (node-count x)])
+                    (if (zero? n)                  
+                        y ; eliminated
+                        (cons (make-node n (combine-breadth (node-tree x))) ; match only leaves, not nodes
+                              y)))))
             null
             xs)))
 
   ;; recursively combine singleton node/leaf nested node
-  ;; assumes no zero number elements
+  ;; eliminates zero number elements
   ;; FIXME an error could be raised instead
   (: combine-depth : (Tree -> Tree))
   (define (combine-depth xs)
@@ -392,42 +382,55 @@
                   ;; leaf
                   (cons x y)
                   ;; node
-                  (if (= 1 (length (node-tree x)))
-                      (let ([nested (car (node-tree x))])
-                        (if (Leaf? nested)
-                            ;; leaf
-                            (cons (make-leaf (* (node-count x) (leaf-count nested))
-                                             (leaf-stitch nested))
-                                  y)
-                            ;; node
-                            (cons (car (combine-depth (list (make-node (* (node-count x) (node-count nested))
-                                                                       (node-tree nested)))))
-                                  y)))
-                      (cons (make-node (node-count x)
-                                       (combine-depth (node-tree x)))
-                            y))))
+                  (let node-loop : Tree ([n : Natural (node-count x)]
+                                         [t (node-tree x)])
+                    (if (= 1 (length t))
+                        ;; singleton node
+                        (let ([x~ (car t)])
+                          (if (Leaf? x~)
+                              ;; leaf
+                              (let ([n~ (leaf-count x~)])
+                                (if (zero? n~)                
+                                    y ; eliminated
+                                    (cons (make-leaf (* n n~)
+                                                     (leaf-stitch x~))
+                                          y)))
+                              ;; node
+                              (let ([n~ (node-count x~)])
+                                (if (zero? n~)                  
+                                    y ; eliminated
+                                    (node-loop (* n n~)
+                                               (node-tree x~))))))
+                        ;; not singleton node
+                        (cons (make-node n (combine-depth t))
+                              y)))))
             null
             xs)))
 
   ;; flatten every node in tree to list of leaves
+  ;; ignores variable repeats
   (: flatten-tree-recurse : (Tree -> Tree))
   (define (flatten-tree-recurse tree)
-    (reverse
-     (foldl (lambda ([x : (U Node Leaf)]
-                     [y : Tree])
-              (if (Leaf? x)
-                  (cons x y)
-                  (append (apply append (build-list (node-count x)
-                                                    (lambda (z)
-                                                      (flatten-tree-recurse (node-tree x)))))
-                          y)))
-            (cast null Tree)
-            tree)))
-
+    (foldl (lambda ([x : (U Node Leaf)]
+                    [y : Tree])
+             (if (Leaf? x)
+                 ;; leaf
+                 (cons x y)
+                 ;; node
+                 (let loop : Tree
+                   ([t : Tree (flatten-tree-recurse (node-tree x))]
+                    [n : Natural (node-count x)]
+                    [res : Tree y])
+                   (if (> n 0)
+                       (loop t (sub1 n) (append t res))
+                       res))))
+           (cast null Tree)
+           tree))
+  
   ;; flatten tree to a list of leaves
   (: flatten-tree : (Tree -> (Listof Leaf)))
   (define (flatten-tree tree)
-    (cast (combine (flatten-tree-recurse tree)) (Listof Leaf)))
+    (cast (combine (reverse (flatten-tree-recurse tree))) (Listof Leaf)))
 
   (define combine (compose1 combine-depth combine-breadth))
 
@@ -443,6 +446,40 @@
      [color : String])
     #:prefab)
 
+  ;; yarn functions
+  (: with-yarn : (Byte -> Symbol))
+  (define (with-yarn n)
+    (if (zero? n)
+        'mc
+        (string->symbol (format "cc~a" n))))
+
+  (: yarn : (-> Byte (-> (U Node Leaf) (U Node Leaf) * Tree)))
+  (define ((yarn [n : Byte]) . xs) : Tree
+    (reverse
+     (foldl (lambda ([x : (U Node Leaf)]
+                     [y : Tree])
+              (if (Leaf? x)
+                  ;; leaf
+                  (cons (make-leaf (leaf-count x) (stitch (leaf-stitchtype x) n))
+                        y)
+                  ;; node
+                  (cons (car ((yarn n) x))
+                        y)))
+            null
+            xs)))
+
+  (define mc (yarn 0))
+  
+  ;; macro to define yarn functions cc1 ... cc20
+  (define-syntax (define-ccns stx)
+    (syntax-case stx ()
+      [(_) (let ([ccn-id (lambda (i) (format-id stx "cc~a" i))])
+             (with-syntax ([((n ccn) ...) (map (lambda (j) (list j (ccn-id j))) (range 1 21))])
+               #'(begin
+                   (define ccn (yarn n))
+                   ...)))]))
+  (define-ccns)
+    
   (: consecutive-rows : (-> (Listof Positive-Index) Boolean))
   (define (consecutive-rows rownums)
     (and
@@ -1157,6 +1194,33 @@
    (tree-var t2)   
    '(((1 . #s(stitch 112 0))) . 1))
 
+  (check-equal?
+   (flatten-tree
+    '((2 . #s(stitch 112 0))
+      (2
+       (1 . #s(stitch 111 0))
+       (3 (2 . #s(stitch 84 0))
+          (1 . #s(stitch 112 0)))
+       (2 . #s(stitch 111 0)))
+      (3 . #s(stitch 106 0))))
+   '((2 . #s(stitch 112 0))
+     (1 . #s(stitch 111 0))
+     (2 . #s(stitch 84 0))
+     (1 . #s(stitch 112 0))
+     (2 . #s(stitch 84 0))
+     (1 . #s(stitch 112 0))
+     (2 . #s(stitch 84 0))
+     (1 . #s(stitch 112 0))
+     (3 . #s(stitch 111 0))
+     (2 . #s(stitch 84 0))
+     (1 . #s(stitch 112 0))
+     (2 . #s(stitch 84 0))
+     (1 . #s(stitch 112 0))
+     (2 . #s(stitch 84 0))
+     (1 . #s(stitch 112 0))
+     (2 . #s(stitch 111 0))
+     (3 . #s(stitch 106 0))))
+  
   ;; tests of `rows` constructor
   (log-knitscheme-debug "start of tests of `rows` constructor")
 

@@ -877,19 +877,6 @@
                             (values rowinfo rownums technology geometry startface startside gauge yarntype))))))))))
     #:transparent)
 
-  #|
-  (: pattern-rows-apply : (All (A) ((Rowinfo -> A) Pattern -> (Mutable-Vectorof (U Zero A)))))
-  (define (pattern-rows-apply f pattern)
-    (let ([res ((inst make-vector (U Zero A)) (Rowmap-rowcount (Pattern-rownums pattern)) 0)])
-      (for ([i (in-range (vector-length (Rowmap-data (Pattern-rownums pattern))))])
-        (let ([row-i (vector-ref (Pattern-rowinfo pattern) i)]
-              [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data (Pattern-rownums pattern)) i)])
-          (let ([f-row-i (f row-i)])
-            (for ([j (in-range (vector-length rownums-i))])
-              (vector-set! res (sub1 (vector-ref rownums-i j)) f-row-i)))))
-      res))
-  |#
-
   ;; alternative constructor
   (: pattern : (->* () (#:technology (U 'hand 'machine)
                         #:geometry (U 'flat 'circular)
@@ -1101,9 +1088,9 @@
 (define-unrepeatable-stitch ssp     (hash-ref stitch-hash #x58))
 (define-unrepeatable-stitch sssk    (hash-ref stitch-hash #x74))
 (define-unrepeatable-stitch sssp    (hash-ref stitch-hash #x76))
-(define-unrepeatable-stitch cdd     (hash-ref stitch-hash #x6f))
-(define-unrepeatable-stitch yo      (hash-ref stitch-hash #x41))
-(define-unrepeatable-stitch dyo     (hash-ref stitch-hash #x6a))
+(define-unrepeatable-stitch yo      (hash-ref stitch-hash #x6f))
+(define-unrepeatable-stitch dyo     (hash-ref stitch-hash #x41))
+(define-unrepeatable-stitch cdd     (hash-ref stitch-hash #x6a))
 (define-unrepeatable-stitch ml      (hash-ref stitch-hash #x3a))
 (define-unrepeatable-stitch mlp     (hash-ref stitch-hash #x78))
 (define-unrepeatable-stitch mr      (hash-ref stitch-hash #x3b))
@@ -1168,32 +1155,6 @@
        (3 (2 . #s(stitch 84 0)))
        (2 . #s(stitch 111 0)))) . 1))
 
-  (define t2
-    (make-tree (make-leaf 0 (stitch #x70 0))
-               (make-leaf 0 (stitch #x6f 0))))
-
-  (check-equal?
-   t2
-   '((0 . #s(stitch 112 0))
-     (0 . #s(stitch 111 0))))
-
-  (check-equal?
-   (flatten-tree t2)
-   '())
-
-  (check-equal?
-   (tree-var-replace t2 2)   
-   '((2 . #s(stitch 112 0))
-     (2 . #s(stitch 111 0))))
-
-  (check-equal?
-   (tree-count-var t2)
-   2)
-
-  (check-equal?
-   (tree-var t2)   
-   '(((1 . #s(stitch 112 0))) . 1))
-
   (check-equal?
    (flatten-tree
     '((2 . #s(stitch 112 0))
@@ -1247,54 +1208,47 @@
 
   ;; rows not consecutive
   (check-equal?
-   rows(1 3)((list-ref t1 0)
-             (list-ref t1 2))
+   rows(1 3)(p(2))
    (Rows
     '(1 3)
-    '((2 . #s(stitch 112 0)) (3 . #s(stitch 106 0))) "" 11 5 11 5 0 0))
+    '((2 . #s(stitch 112 0))) "" 2 2 2 2 0 0))
 
   ;; consecutive and conformable
   (check-equal?
-   rows(1 2)((list-ref t1 0)
-             (list-ref t1 0))
+   rows(1 2)(k(2) p(2))
    (Rows
     '(1 2)
-    '((2 . #s(stitch 112 0)) (2 . #s(stitch 112 0))) "" 4 4 4 4 0 0))
+    '((2 . #s(stitch 107 0)) (2 . #s(stitch 112 0))) "" 4 4 4 4 0 0))
 
   ;; consecutive and conformable
   (check-equal?
-   rows('(1 2) '(1) #:memo "new memo")((list-ref t1 0)
-                                       (list-ref t1 1)
-                                       (list-ref t1 2))
+   rows('(1 2) '(1) #:memo "new memo")(p(2) repeat(yo x3(bo(2)) twice(yo)) x3(cdd))
    (Rows
     '(1 2)
     '((2 . #s(stitch 112 0))
       (0
        (1 . #s(stitch 111 0))
        (3 (2 . #s(stitch 84 0)))
-       (2 . #s(stitch 111 0)))
-      (3 . #s(stitch 106 0))) "new memo"  0 0 11 5 6 3))
+       (2 (1 . #s(stitch 111 0))))
+      (3 (1 . #s(stitch 106 0)))) "new memo" 0 0 11 5 6 3))
 
   ;; consecutive but not conformable   
   (check-exn
    exn:fail?
    (lambda ()
-     rows(1 2)((list-ref t1 0)
-               (list-ref t1 2))))
+     rows(1 2)(k(1) m)))
 
   ;; consecutive but not conformable
   (check-exn
    exn:fail?
    (lambda ()
-     rows(1 2)((list-ref t1 0)
-               (list-ref t1 1)
-               (make-leaf 1 (stitch #x6a 0)))))
-
+     rows(1 2)(k(1) ssk)))
+  
   ;; no row numbers
   (check-exn
    exn:fail?
    (lambda ()
-     rows(null)((list-ref t1 0))))
+     rows(null)(k(1))))
 
   ;; tests of `pattern` constructor
   (log-knitscheme-debug "start of tests of `pattern` constructor")

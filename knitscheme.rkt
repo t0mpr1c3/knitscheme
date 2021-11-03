@@ -150,20 +150,38 @@
   ;; node data = number of repeats
   ;; each node can have multiple children
 
-  ;; recursive definition of tree
-  (define-type Tree (Listof (U Node Leaf)))
+  ;; recursive definition of Tree and related types
+
+  (define-type Tree (Listof (U Leaf Node)))
   (define-type Leaf (Pairof Natural stitch)) ; repeat-count stitch
   (define-type Node (Pairof Natural Tree)) ; repeat-count repeat-content
+  (define-type Treelike (Listof (U Leaf Node Treelike)))
+
+  ;; Treelike functions
+  (define-predicate Treelike? Treelike)
+  
+  ;; convert Treelike list to Tree
+  (: treelike->tree : (Treelike -> Tree))
+  (define (treelike->tree xs)
+    (reverse
+     (foldl
+      (lambda ([x : (U Leaf Node Treelike)]
+               [y : Tree])
+        (if (Treelike? x)
+            (append (treelike->tree x) y)
+            (cons x y)))
+      null
+      xs)))
 
   ;; variable number repeat
-  (: repeat : (-> (U Node Leaf) (U Node Leaf) * Node))
+  (: repeat : (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Node))
   (define (repeat . xs)
-    (make-node 0 xs))
+    (make-node 0 (treelike->tree xs)))
 
   ;; fixed number repeat
-  (: times : (-> Natural (-> (U Node Leaf) (U Node Leaf) * Node)))
+  (: times : (-> Natural (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Node)))
   (define ((times n) . xs)
-    (make-node n xs))
+    (make-node n (treelike->tree xs)))
 
   ;; aliases for small number repeats
   (define once (times 1))
@@ -268,6 +286,8 @@
     (* (leaf-count leaf) (stitchtype-stitches-out (hash-ref stitch-hash (leaf-stitchtype leaf)))))
 
   ;; node functions
+  (define-predicate Node? Node)
+  
   (: make-node : (Natural Tree -> Node))
   (define (make-node n tree)
     (cons n tree))
@@ -281,13 +301,15 @@
     (cdr node))
 
   ;; tree functions
-  (: make-tree : ((U Node Leaf) (U Node Leaf) * -> Tree))
+  (define-predicate Tree? Tree)
+  
+  (: make-tree : ((U Leaf Node) (U Leaf Node) * -> Tree))
   (define (make-tree . xs) xs)
 
   ;; count (non-nested) variable repeats in tree
   (: tree-count-var : (Tree -> Natural))
   (define (tree-count-var tree)
-    (foldl (lambda ([x : (U Node Leaf)]
+    (foldl (lambda ([x : (U Leaf Node)]
                     [y : Natural])
              (if (Leaf? x)
                  ;; leaf
@@ -307,7 +329,7 @@
   (: tree-var : (->* (Tree) (Natural) (U False (Pairof Tree Natural))))
   (define (tree-var tree [multiplier 1])
     (for/or : (U False (Pairof Tree Natural)) ([i (in-range (length tree))])
-      (let ([x : (U Node Leaf) (list-ref tree i)])
+      (let ([x : (U Leaf Node) (list-ref tree i)])
         (if (Leaf? x)
             ;; leaf
             (if (zero? (leaf-count x))
@@ -323,7 +345,7 @@
   (: tree-var-replace : (Tree Natural -> Tree))
   (define (tree-var-replace tree r) : Tree
     (reverse
-     (foldl (lambda ([x : (U Node Leaf)]
+     (foldl (lambda ([x : (U Leaf Node)]
                      [y : Tree])
               (if (Leaf? x)
                   ;; leaf
@@ -344,7 +366,7 @@
   (: combine-breadth : (Tree -> Tree))
   (define (combine-breadth xs)
     (reverse
-     (foldl (lambda ([x : (U Node Leaf)]
+     (foldl (lambda ([x : (U Leaf Node)]
                      [y : Tree])
               (if (Leaf? x)
                   ;; leaf
@@ -376,7 +398,7 @@
   (: combine-depth : (Tree -> Tree))
   (define (combine-depth xs)
     (reverse
-     (foldl (lambda ([x : (U Node Leaf)]
+     (foldl (lambda ([x : (U Leaf Node)]
                      [y : Tree])
               (if (Leaf? x)
                   ;; leaf
@@ -411,7 +433,7 @@
   ;; ignores variable repeats
   (: flatten-tree-recurse : (Tree -> Tree))
   (define (flatten-tree-recurse tree)
-    (foldl (lambda ([x : (U Node Leaf)]
+    (foldl (lambda ([x : (U Leaf Node)]
                     [y : Tree])
              (if (Leaf? x)
                  ;; leaf
@@ -453,10 +475,10 @@
         'mc
         (string->symbol (format "cc~a" n))))
 
-  (: yarn : (-> Byte (-> (U Node Leaf) (U Node Leaf) * Tree)))
-  (define ((yarn [n : Byte]) . xs) : Tree
+  (: yarn : (-> Byte (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Tree)))
+  (define ((yarn [n : Byte]) . xs)
     (reverse
-     (foldl (lambda ([x : (U Node Leaf)]
+     (foldl (lambda ([x : (U Leaf Node)]
                      [y : Tree])
               (if (Leaf? x)
                   ;; leaf
@@ -466,7 +488,7 @@
                   (cons (car ((yarn n) x))
                         y)))
             null
-            xs)))
+            (treelike->tree xs))))
 
   (define mc (yarn 0))
   
@@ -620,12 +642,12 @@
 
   ;; alternative constructor
   (: rows : (->* () (#:memo String #:stitches Nonnegative-Integer) #:rest (U Positive-Index (Listof Positive-Index)) 
-                 (-> (U Leaf Node) (U Leaf Node) * Rows)))
-  (define ((rows #:memo [memo : String ""] #:stitches [stitches-out-total : Nonnegative-Integer 0] . rownums) . tree)
+                 (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Rows)))
+  (define ((rows #:memo [memo : String ""] #:stitches [stitches-out-total : Nonnegative-Integer 0] . rownums) . xs)
     (log-knitscheme-debug "in `rows` constructor")
     (Rows
      (cast (flatten rownums) (Listof Positive-Index))
-     tree
+     (treelike->tree xs)
      memo
      0 stitches-out-total 0 0 0 0))
   ;; aliases
@@ -939,7 +961,7 @@
   (define (stitches->knitspeak tree)
     (let ([str
            (foldl
-            (lambda ([x : (U Node Leaf)]
+            (lambda ([x : (U Leaf Node)]
                      [y : String])
               (if (Leaf? x)
                   ;; leaf
@@ -1220,7 +1242,7 @@
     '(1 2)
     '((2 . #s(stitch 107 0)) (2 . #s(stitch 112 0))) "" 4 4 4 4 0 0))
 
-  ;; consecutive and conformable
+  ;; consecutive and conformable, memo, repeated and list-format row numbers
   (check-equal?
    rows('(1 2) '(1) #:memo "new memo")(p(2) repeat(yo x3(bo(2)) twice(yo)) x3(cdd))
    (Rows
@@ -1249,6 +1271,23 @@
    exn:fail?
    (lambda ()
      rows(null)(k(1))))
+
+  ;; tests of yarn functions
+  (log-knitscheme-debug "start of tests of yarn functions")
+  
+  (check-equal?
+   rows(1)(cc9(k(1)))
+   (Rows
+    '(1)
+    '((1 . #s(stitch 107 9))) "" 1 1 1 1 0 0))
+  
+  (check-equal?
+   rows(1)(mc(cc9(k(1))))
+   (Rows
+    '(1)
+    '((1 . #s(stitch 107 0))) "" 1 1 1 1 0 0))
+
+  ;; FIXME need more tests of yarn functions
 
   ;; tests of `pattern` constructor
   (log-knitscheme-debug "start of tests of `pattern` constructor")
@@ -1515,8 +1554,7 @@
    exn:fail?
    (lambda ()
      (pattern rows(1 3)(k(1) m) rows(2 5)(k2tog))))
-
-  ;; more tests using times, repeat, etc.
+  
   (log-knitscheme-debug "end of tests"))
 
   

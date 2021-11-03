@@ -956,34 +956,36 @@
            [rowinfo-ordered (sort rowinfo-pairs
                                   (lambda ([x : (Pairof Natural Natural)] [y : (Pairof Natural Natural)])
                                     (< (car x) (car y))))]   
-           [rowinfo-order ((inst map Natural (Pairof Natural Natural)) cdr rowinfo-ordered)])
+           [rowinfo-order ((inst map Natural (Pairof Natural Natural)) cdr rowinfo-ordered)]           
+           [n : Natural (length rowinfo-order)])
       ;; loop over rowinfos
-      (let loop ([i : Integer 0]
+      (let loop ([i : Natural 0]
                  [res : String
-                      (let ([flat : Boolean (eq? 'flat (Pattern-geometry p))]
+                      (let ([hand : Boolean (eq? 'hand (Pattern-technology p))]
+                            [flat : Boolean (eq? 'flat (Pattern-geometry p))]
                             [rs : Boolean (eq? 'rs (Pattern-startface p))])
-                        (string-append "This "
-                                       (symbol->string (Pattern-technology p))
+                        (string-append "This " (symbol->string (Pattern-technology p))
                                        " knitting pattern is designed to be knit "
                                        (if flat
-                                           "flat. Odd-numbered rows are"
-                                           "in the round. Every row is")
-                                       " knit on the "
-                                       (if rs "RS" "WS")
-                                       " of the piece"
-                                       (if flat
+                                           (string-append "flat. "
+                                                          (if hand
+                                                              "Odd-numbered rows are"
+                                                              "Every row is"))
+                                           "in the round. Every round is")                                       
+                                       " knit on the " (if rs "RS" "WS") " of the piece"
+                                       (if (and flat hand)
                                            (string-append ", even-numbered rows on the " (if rs "WS" "RS"))
                                            "")
-                                       ". The first row starts on the "
-                                       (symbol->string (Pattern-startside p))
+                                       ". The first " (string-downcase row-lex)
+                                       " starts on the " (symbol->string (Pattern-startside p))
                                        " hand side of the pattern.\nCast on "
-                                       (~a (Rowinfo-stitches-in-total (vector-ref (Pattern-rowinfo p) 0))
-                                           " stitches"
-                                           (if flat
-                                               ""
-                                               " and join in the round")
-                                           ".\n")))])
-        (if (< i (length rowinfo-order))
+                                       (~a (Rowinfo-stitches-in-total (vector-ref (Pattern-rowinfo p) 0)))
+                                       " stitches"
+                                       (if flat
+                                           ""
+                                           " and join in the round")
+                                       ".\n"))])
+        (if (< i n)
             (let* ([j (list-ref rowinfo-order i)]
                    [rownums-j (vector->list (vector-ref data j))]
                    [rowinfo-j (vector-ref (Pattern-rowinfo p) j)]
@@ -999,6 +1001,11 @@
                                    |# 
                                    ":"
                                    (stitches->knitspeak (Rowinfo-stitches rowinfo-j))
+                                   (if (= i (sub1 n))
+                                       (string-append " ("
+                                                      (~a (Rowinfo-stitches-out-total rowinfo-j))
+                                                      " stitches)")
+                                       "")
                                    ".\n")))
             res))))
 
@@ -1496,11 +1503,13 @@
 
   
 (define p1
-  (pattern rows(2 5)(k(1) repeat(k(1) p(1)) k(1))
+  (pattern #:technology 'hand #:geometry 'flat
+           rows(2 5)(k(1) repeat(k(1) p(1)) k(1))
+           rows(8)(bo)
            rows(1 3 #:memo "m1")(k(3) p(3))
            rows(7)(k2tog k2tog k2tog)
            rows(4 6 #:memo "m4")(x2(x3(p)))))
-(log-knitscheme-info (string-append "\n" (pattern->knitspeak p1)))
+(log-knitscheme-info (string-append "\n\n" (pattern->knitspeak p1)))
 
 (log-knitscheme-info "end of knitscheme.rkt")
 ;; end

@@ -360,9 +360,7 @@
             tree)))
 
   ;; recursively combine consecutive leaves with same stitch type into single leaf
-  ;; zero number elements are eliminated
-  ;; FIXME an error could be raised instead
-  ;; because elsewhere 0 signifies a variable number element
+  ;; eliminate zero number elements
   (: combine-breadth : (Tree -> Tree))
   (define (combine-breadth xs)
     (reverse
@@ -393,8 +391,7 @@
             xs)))
 
   ;; recursively combine singleton node/leaf nested node
-  ;; eliminates zero number elements
-  ;; FIXME an error could be raised instead
+  ;; eliminate zero number elements
   (: combine-depth : (Tree -> Tree))
   (define (combine-depth xs)
     (reverse
@@ -579,36 +576,36 @@
                                               (quotient/remainder (- stitches-out-total stitches-out-fixed~)
                                                                   stitches-out-var~)])
                                   (if (not (zero? r))
-                                      (error "total number of stitches produced does not conform with variable number repeat")
-                                      (if (consecutive-rows rownums~)
-                                          ;; consecutive rows
-                                          ;; replace variable number repeat by fixed value
-                                          (let* ([stitches~ (tree-var-replace stitches q)]
-                                                 [flat~ (flatten-tree stitches~)]
-                                                 [stitches-in-total~ (sum (map leaf-stitches-in flat~))])
+                                      (error "total number of stitches produced does not conform with variable number repeat")                                     
+                                      ;; replace variable number repeat by fixed value
+                                      (let* ([stitches~ (tree-var-replace stitches q)]
+                                             [flat~ (flatten-tree stitches~)]
+                                             [stitches-in-total~ (sum (map leaf-stitches-in flat~))])
+                                        (if (consecutive-rows rownums~)
+                                            ;; consecutive rows
                                             ;; check that stitches in/out are conformable for consecutive rows
                                             (if (not (= stitches-in-total~ stitches-out-total))                 
                                                 (error "consecutive rows are not conformable")
                                                 ;; result
                                                 (values rownums~
-                                                        stitches~
+                                                        (combine stitches~)
                                                         memo
                                                         stitches-out-total
                                                         stitches-out-total
                                                         stitches-out-total
                                                         stitches-out-total
                                                         0
-                                                        0)))
-                                          ;; no consecutive rows
-                                          (values rownums~
-                                                  stitches
-                                                  memo
-                                                  stitches-in-total
-                                                  stitches-out-total
-                                                  stitches-in-fixed~
-                                                  stitches-out-fixed~
-                                                  stitches-in-var~
-                                                  stitches-out-var~)))))
+                                                        0))
+                                            ;; no consecutive rows
+                                            (values rownums~
+                                                    (combine stitches~)
+                                                    memo
+                                                    stitches-in-total~
+                                                    stitches-out-total
+                                                    stitches-in-fixed~
+                                                    stitches-out-fixed~
+                                                    (if (zero? q) 0 stitches-in-var~)
+                                                    (if (zero? q) 0 stitches-out-var~)))))))
                             ;; #:stitches has not been specified
                             (let ([diff1 (abs (- stitches-in-fixed~ stitches-out-fixed~))]
                                   [diff2 (abs (- stitches-in-var~ stitches-out-var~))])
@@ -842,7 +839,9 @@
                                                              out-total~)                                           
                                                 (vector-set! rowinfo k
                                                              (Rowinfo
-                                                              stitches~
+                                                              (if (zero? qi)
+                                                                  (combine stitches~)
+                                                                  stitches~)
                                                               (Rowinfo-memo rowinfo-k)
                                                               in-total
                                                               out-total~
@@ -862,7 +861,9 @@
                                                              in-total~)
                                                 (vector-set! rowinfo k
                                                              (Rowinfo
-                                                              stitches~
+                                                              (if (zero? qo)
+                                                                  (combine stitches~)
+                                                                  stitches~)
                                                               (Rowinfo-memo rowinfo-k)
                                                               in-total~
                                                               out-total
@@ -950,8 +951,8 @@
                       rows))))
             1)])
       (log-knitscheme-debug (~a rows))
-      (log-knitscheme-debug  (~a rowinfo~))
-      (log-knitscheme-debug  (~a rowmap~))
+      (log-knitscheme-debug (~a rowinfo~))
+      (log-knitscheme-debug (~a rowmap~))
       ;; result
       (Pattern rowinfo~ rowmap~ technology geometry startface startside gauge yarntype)))
 
@@ -1276,11 +1277,18 @@
     '(1)
     '((48 . #s(stitch 107 0))) "" 48 48 48 48 0 0))
 
-  ;; rows not consecutive
+  ;; nonconsecutive rows
   (check-equal?
    rows(1 3)(p(2))
    (Rows
     '(1 3)
+    '((2 . #s(stitch 112 0))) "" 2 2 2 2 0 0))
+
+  ;; variable number repeat evaluates to zero
+  (check-equal?
+   rows(1 #:stitches 2)(p(2) k(0))
+   (Rows
+    '(1)
     '((2 . #s(stitch 112 0))) "" 2 2 2 2 0 0))
 
   ;; consecutive and conformable
@@ -1554,6 +1562,21 @@
     'right
     #f
     '#(#f)))
+  
+  ;; variable repeat evaluates to zero
+  (check-equal?
+   (pattern rows(1)(p(1) k(0)) rows(2)(p(1)))
+   (Pattern
+    (vector
+     (Rowinfo '((1 . #s(stitch 112 0))) "" 1 1 0 0 0 0)
+     (Rowinfo '((1 . #s(stitch 112 0))) "" 1 1 0 0 0 0))
+    (Rowmap '#(#(1) #(2)) 2)
+    'machine
+    'flat
+    'rs
+    'right
+    #f
+    '#(#f)))
 
   ;; unconstrained variable repeat (single row)
   (check-exn
@@ -1619,8 +1642,6 @@
    "\nYarn:\nMC\nCC1: brand unknown, fiber wool, weight worsted, color red\n")
 
   (log-knitscheme-info "tests completed"))
-
-;; demo of text output
 (define p1
   (pattern #:technology 'hand #:geometry 'flat
            #:yarns '#(#s(yarntype "unknown" "acrylic" "worsted" "white")
@@ -1629,20 +1650,8 @@
            rows(8)(bo)
            rows(1 3 #:memo "m1")(k(3) p(3))
            rows(7)(k2tog k2tog k2tog)
-           rows(4 6 #:memo "m4")(x2(x3(p)))))
+           rows(4 6 #:memo "m4")(x2(x3(p(1)) k(0)))))
 (log-knitscheme-info (string-append "\n\n" (pattern->text p1)))
 
 (log-knitscheme-info "end of knitscheme.rkt")
 ;; end
-
-(check-equal?
- (yarntype->text '#())
- "")
-
-(check-equal?
- (yarntype->text '#(#s(yarntype "" "" "" "")))
- "Yarn:\nMC\n")
-
-(check-equal?
-(yarntype->text '#(#s(yarntype "" "" "" "") #s(yarntype "unknown" "wool" "worsted" "red")))
-"Yarn:\nMC\nCC1: brand unknown, fiber wool, weight worsted, color red\n")

@@ -79,8 +79,8 @@
   (struct stitchtype
     ([rs-symbol : Byte]
      [ws-symbol : Byte]
-     [stitches-in : Index]
-     [stitches-out : Index]
+     [stitches-in : Natural]
+     [stitches-out : Natural]
      [id : String]
      [name : String]
      [rx : PRegexp]
@@ -641,9 +641,9 @@
   |#
 
   ;; alternative constructor
-  (: rows : (->* () (#:memo String #:stitches Nonnegative-Integer) #:rest (U Positive-Index (Listof Positive-Index)) 
+  (: rows : (->* () (#:memo String #:stitches Natural) #:rest (U Positive-Index (Listof Positive-Index)) 
                  (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Rows)))
-  (define ((rows #:memo [memo : String ""] #:stitches [stitches-out-total : Nonnegative-Integer 0] . rownums) . xs)
+  (define ((rows #:memo [memo : String ""] #:stitches [stitches-out-total : Natural 0] . rownums) . xs)
     (log-knitscheme-debug "in `rows` constructor")
     (Rows
      (cast (flatten rownums) (Listof Positive-Index))
@@ -955,10 +955,56 @@
       ;; result
       (Pattern rowinfo~ rowmap~ technology geometry startface startside gauge yarntype)))
 
-  ;; conversion to knitspeak
+  ;; text output functions
 
-  (: stitches->knitspeak : (Tree -> String))
-  (define (stitches->knitspeak tree)
+  (: yarns->text : ((Immutable-Vectorof (U yarntype False))-> String))
+  (define (yarns->text yarns)
+    (let ([n : Natural (vector-length yarns)])
+      (if (zero? n)
+          ""
+          (string-append
+           "\nYarn:\n"
+           (let loop : String ([i : Natural 0]
+                               [res : String ""])
+             (if (< i n)
+                 (loop (add1 i)
+                       (string-append
+                        res
+                        (if (= 0 i)
+                            "MC"
+                            (format "CC~a" i))
+                        (let ([yarn-i (vector-ref yarns i)])
+                          (if (false? yarn-i)
+                              ""
+                              (let* ([brand-i (yarntype-brand yarn-i)]
+                                     [fiber-i (yarntype-fiber yarn-i)]
+                                     [weight-i (yarntype-weight yarn-i)]
+                                     [color-i (yarntype-color yarn-i)]
+                                     [attr (list "brand" "fiber" "weight" "color")]
+                                     [desc (list brand-i fiber-i weight-i color-i)]
+                                     [empty (map (lambda ([x : String]) (string=? "" x))
+                                                 desc)]
+                                     [str (map (lambda ([x : String] [y : String]) (string-append x " " y))
+                                               attr
+                                               desc)]
+                                     [str-pairs (map (inst cons Boolean String)
+                                                     empty
+                                                     str)]
+                                     [str-pairs-filtered (filter (lambda ([x : (Pairof Boolean String)]) (not (car x)))
+                                                                 str-pairs)]
+                                     [str-filtered (map (inst cdr Boolean String)
+                                                        str-pairs-filtered)])
+                                (string-append
+                                 (if (andmap (inst identity Boolean)
+                                             empty)
+                                     ""
+                                     ": ")
+                                 (string-join str-filtered ", ")))))
+                        "\n"))
+                 res))))))
+                
+  (: stitches->text : (Tree -> String))
+  (define (stitches->text tree)
     (let ([str
            (foldl
             (lambda ([x : (U Leaf Node)]
@@ -979,16 +1025,16 @@
                   (let ([t (node-tree x)]
                         [n (node-count x)])
                     (if (= n 1)
-                        (string-append y (stitches->knitspeak t))
+                        (string-append y (stitches->text t))
                         (if (= n 2)
-                            (string-append y " [" (stitches->knitspeak t) " ] twice,")
-                            (string-append y " [" (stitches->knitspeak t) " ] " (~a n) " times,"))))))
+                            (string-append y " [" (stitches->text t) " ] twice,")
+                            (string-append y " [" (stitches->text t) " ] " (~a n) " times,"))))))
             ""
             tree)])
       (substring str 0 (sub1 (string-length str))))) ; remove trailing comma
 
-  (: pattern->knitspeak : (Pattern -> String))
-  (define (pattern->knitspeak p)
+  (: pattern->text : (Pattern -> String))
+  (define (pattern->text p)
     (let* ([row-lex (if (eq? (Pattern-geometry p) 'circular)
                         "Round"
                         "Row")]
@@ -1024,7 +1070,9 @@
                                            "")
                                        ". The first " (string-downcase row-lex)
                                        " starts on the " (symbol->string (Pattern-startside p))
-                                       " hand side of the pattern.\nCast on "
+                                       " hand side of the pattern.\n"
+                                       (yarns->text (Pattern-yarns p))
+                                       "\nCast on "
                                        (~a (Rowinfo-stitches-in-total (vector-ref (Pattern-rowinfo p) 0)))
                                        " stitches"
                                        (if flat
@@ -1046,7 +1094,7 @@
                                        (string-append " (memo " memo-j ")"))
                                    |# 
                                    ":"
-                                   (stitches->knitspeak (Rowinfo-stitches rowinfo-j))
+                                   (stitches->text (Rowinfo-stitches rowinfo-j))
                                    (if (= i (sub1 n))
                                        (string-append " ("
                                                       (~a (Rowinfo-stitches-out-total rowinfo-j))
@@ -1554,18 +1602,47 @@
    exn:fail?
    (lambda ()
      (pattern rows(1 3)(k(1) m) rows(2 5)(k2tog))))
-  
-  (log-knitscheme-debug "end of tests"))
 
-  
+  ;; tests of `yarns->text` function
+  (log-knitscheme-debug "start tests of `yarntype->text` function")
+
+  (check-equal?
+   (yarns->text '#())
+   "")
+
+  (check-equal?
+   (yarns->text '#(#s(yarntype "" "" "" "")))
+   "\nYarn:\nMC\n")
+
+  (check-equal?
+   (yarns->text '#(#f #s(yarntype "unknown" "wool" "worsted" "red")))
+   "\nYarn:\nMC\nCC1: brand unknown, fiber wool, weight worsted, color red\n")
+
+  (log-knitscheme-info "tests completed"))
+
+;; demo of text output
 (define p1
   (pattern #:technology 'hand #:geometry 'flat
+           #:yarns '#(#s(yarntype "unknown" "acrylic" "worsted" "white")
+                      #s(yarntype "unknown" "acrylic" "worsted" "black"))
            rows(2 5)(k(1) repeat(k(1) p(1)) k(1))
            rows(8)(bo)
            rows(1 3 #:memo "m1")(k(3) p(3))
            rows(7)(k2tog k2tog k2tog)
            rows(4 6 #:memo "m4")(x2(x3(p)))))
-(log-knitscheme-info (string-append "\n\n" (pattern->knitspeak p1)))
+(log-knitscheme-info (string-append "\n\n" (pattern->text p1)))
 
 (log-knitscheme-info "end of knitscheme.rkt")
 ;; end
+
+(check-equal?
+ (yarntype->text '#())
+ "")
+
+(check-equal?
+ (yarntype->text '#(#s(yarntype "" "" "" "")))
+ "Yarn:\nMC\n")
+
+(check-equal?
+(yarntype->text '#(#s(yarntype "" "" "" "") #s(yarntype "unknown" "wool" "worsted" "red")))
+"Yarn:\nMC\nCC1: brand unknown, fiber wool, weight worsted, color red\n")

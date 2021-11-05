@@ -138,7 +138,7 @@
   ;; stitch struct
   (struct stitch
     ([stitchtype : Byte]
-     [yarntype : Byte])
+     [yarntype : (Option Byte)])
     #:prefab)
 
   (: stitch->char : (stitch -> Char))
@@ -271,7 +271,7 @@
   (define (leaf-stitchtype leaf)
     (stitch-stitchtype (leaf-stitch leaf)))
 
-  (: leaf-yarntype : (Leaf -> Byte))
+  (: leaf-yarntype : (Leaf -> (Option Byte)))
   (define (leaf-yarntype leaf)
     (stitch-yarntype (leaf-stitch leaf)))
 
@@ -326,9 +326,9 @@
 
   ;; obtain (leftmost non-nested) variable repeat from tree
   ;; or return #f if no variable repeat
-  (: tree-var : (->* (Tree) (Natural) (U False (Pairof Tree Natural))))
+  (: tree-var : (->* (Tree) (Natural) (Option (Pairof Tree Natural))))
   (define (tree-var tree [multiplier 1])
-    (for/or : (U False (Pairof Tree Natural)) ([i (in-range (length tree))])
+    (for/or : (Option (Pairof Tree Natural)) ([i (in-range (length tree))])
       (let ([x : (U Leaf Node) (list-ref tree i)])
         (if (Leaf? x)
             ;; leaf
@@ -358,6 +358,14 @@
                       (cons (make-node (node-count x) (tree-var-replace (node-tree x) r)) y))))
             (cast null Tree)
             tree)))
+
+  ;; recursively combine first by breadth, then by depth, until there are no further changes
+  (: combine : (Tree -> Tree))
+  (define (combine xs)
+    (let ([xs~ (combine-depth (combine-breadth xs))])
+      (if (equal? xs xs~)
+          xs~
+          (combine xs~))))
 
   ;; recursively combine consecutive leaves with same stitch type into single leaf
   ;; eliminate zero number elements
@@ -451,9 +459,6 @@
   (define (flatten-tree tree)
     (cast (combine (reverse (flatten-tree-recurse tree))) (Listof Leaf)))
 
-  (define combine (compose1 combine-depth
-                            combine-breadth))
-
   ;; define data structs
 
   ;; non-empty list
@@ -473,20 +478,27 @@
         'mc
         (string->symbol (format "cc~a" n))))
 
-  (: yarn : (-> Byte (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Tree)))
-  (define ((yarn [n : Byte]) . xs)
-    (reverse
+  (: yarn : (-> (Option Byte) (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Tree)))
+  (define ((yarn n) . xs)
+    (yarn-recurse n (treelike->tree xs)))
+
+  (: yarn-recurse : ((Option Byte) Tree -> Tree))
+  (define (yarn-recurse n xs)
      (foldl (lambda ([x : (U Leaf Node)]
                      [y : Tree])
               (if (Leaf? x)
                   ;; leaf
-                  (cons (make-leaf (leaf-count x) (stitch (leaf-stitchtype x) n))
-                        y)
+                  (if (or
+                       (false? n)
+                       (false? (leaf-yarntype x)))
+                      (cons (make-leaf (leaf-count x) (stitch (leaf-stitchtype x) n))
+                            y)
+                      (cons x y))
                   ;; node
-                  (cons (car ((yarn n) x))
+                  (cons (make-node (node-count x) (reverse (yarn-recurse n (node-tree x))))
                         y)))
             null
-            (treelike->tree xs))))
+            xs))
 
   (define mc (yarn 0))
 
@@ -511,7 +523,7 @@
     ([rownums : (Listof Positive-Index)]
      [stitches : Tree]
      [memo : String]
-     [yarn : Byte]
+     [yarn : (Option Byte)]
      [stitches-in-total : Natural]
      [stitches-out-total : Natural]
      [stitches-in-fixed : Natural]
@@ -550,7 +562,7 @@
   (: rows-guard-rownums : ((Listof Positive-Index)
                            Tree
                            String
-                           Byte
+                           (Option Byte)
                            Natural
                            Natural
                            Natural
@@ -560,7 +572,7 @@
                            -> (values (Listof Positive-Index)
                                       Tree
                                       String
-                                      Byte
+                                      (Option Byte)
                                       Natural
                                       Natural
                                       Natural
@@ -596,7 +608,7 @@
   (: rows-guard-dispatch : ((Listof Positive-Index)
                             Tree
                             String
-                            Byte
+                            (Option Byte)
                             Natural
                             Natural
                             Natural
@@ -606,7 +618,7 @@
                             -> (values (Listof Positive-Index)
                                        Tree
                                        String
-                                       Byte
+                                       (Option Byte)
                                        Natural
                                        Natural
                                        Natural
@@ -669,7 +681,7 @@
   (: rows-guard-fixed : ((Listof Positive-Index)
                          Tree
                          String
-                         Byte
+                         (Option Byte)
                          Natural
                          Natural
                          Natural
@@ -679,7 +691,7 @@
                          -> (values (Listof Positive-Index)
                                     Tree
                                     String
-                                    Byte
+                                    (Option Byte)
                                     Natural
                                     Natural
                                     Natural
@@ -725,7 +737,7 @@
   (: rows-guard-var-replace : ((Listof Positive-Index)
                                Tree
                                String
-                               Byte
+                               (Option Byte)
                                Natural
                                Natural
                                Natural
@@ -735,7 +747,7 @@
                                -> (values (Listof Positive-Index)
                                           Tree
                                           String
-                                          Byte
+                                          (Option Byte)
                                           Natural
                                           Natural
                                           Natural
@@ -809,7 +821,7 @@
   (: rows-guard-var-keep : ((Listof Positive-Index)
                             Tree
                             String
-                            Byte
+                            (Option Byte)
                             Natural
                             Natural
                             Natural
@@ -819,7 +831,7 @@
                             -> (values (Listof Positive-Index)
                                        Tree
                                        String
-                                       Byte
+                                       (Option Byte)
                                        Natural
                                        Natural
                                        Natural
@@ -882,16 +894,15 @@
                  (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Rows)))
   (define ((rows #:memo [memo : String ""]
                  #:stitches [stitches-out-total : Natural 0]
-                 #:yarn [yarn : (Option Byte) #f] . rownums) . xs)
+                 #:yarn [y : (Option Byte) 0] ; MC is default yarn
+                 . rownums) . xs)
     (log-knitscheme-debug "in `rows` constructor")
-    (Rows
-     (cast (flatten rownums) (Listof Positive-Index))
-     (treelike->tree xs)
-     memo
-     (if (false? yarn)
-         0 ; FIXME set to previous value
-         yarn)
-     0 stitches-out-total 0 0 0 0))
+      (Rows
+       (cast (flatten rownums) (Listof Positive-Index))
+       (yarn y)(xs)
+       memo
+       y
+       0 stitches-out-total 0 0 0 0))
   ;; aliases
   (define row rows)
   (define rounds rows)
@@ -905,7 +916,7 @@
   (struct Rowinfo
     ([stitches : Tree]
      [memo : String]
-     [yarn : Byte]
+     [yarn : (Option Byte)]
      [stitches-in-total : Natural]
      [stitches-out-total : Natural]
      [stitches-in-fixed : Natural]   ; only used in
@@ -1378,7 +1389,7 @@
 
   ;; text output functions
 
-  (: yarns->text : ((Immutable-Vectorof (U yarntype False))-> String))
+  (: yarns->text : ((Immutable-Vectorof (Option yarntype))-> String))
   (define (yarns->text yarns)
     (let ([n : Natural (vector-length yarns)])
       (if (zero? n)
@@ -1542,17 +1553,17 @@
 (define-syntax-rule (define-variable-repeat-stitch id st)
   (define-syntax (id stx)
     (syntax-case stx ()
-      [(_ n) #'(make-leaf n (stitch (stitchtype-rs-symbol st) 0))]
-      [_ #'(make-leaf 0 (stitch (stitchtype-rs-symbol st) 0))])))
+      [(_ n) #'(make-leaf n (stitch (stitchtype-rs-symbol st) #f))]
+      [_ #'(make-leaf 0 (stitch (stitchtype-rs-symbol st) #f))])))
 
 (define-syntax-rule (define-repeatable-stitch id st)
   (define-syntax-rule (id n)
-    (make-leaf n (stitch (stitchtype-rs-symbol st) 0))))
+    (make-leaf n (stitch (stitchtype-rs-symbol st) #f))))
 
 (define-syntax-rule (define-unrepeatable-stitch id st)
   (define-syntax (id stx)
     (syntax-case stx ()
-      [_ #'(make-leaf 1 (stitch (stitchtype-rs-symbol st) 0))])))
+      [_ #'(make-leaf 1 (stitch (stitchtype-rs-symbol st) #f))])))
 
 
 ; stitch function definitions
@@ -1672,43 +1683,44 @@
      (2 . #s(stitch 111 0))
      (3 . #s(stitch 106 0))))
 
+
   ;; tests of `rows` constructor
   (log-knitscheme-debug "start tests of `rows` constructor")
 
   ;; no variable repeats, combine adjacent leaves
   (check-equal?
-   rows(1)(k(1) k(1))
+   rows(1 #:memo "test of `rows` constructor")(k(1) k(1))
    (Rows
     '(1)
-    '((2 . #s(stitch 107 0))) "" 0 2 2 2 2 0 0))
+    '((2 . #s(stitch 107 0))) "test of `rows` constructor" 0 2 2 2 2 0 0))
 
   ;; no variable repeats, combine leaf in singleton node
   (check-equal?
-   rows(1)(x2(k(1)))
+   rows(1 #:memo "test of `rows` constructor")(x2(k(1)))
    (Rows
     '(1)
-    '((2 . #s(stitch 107 0))) "" 0 2 2 2 2 0 0))
+    '((2 . #s(stitch 107 0))) "test of `rows` constructor" 0 2 2 2 2 0 0))
 
   ;; no variable repeats, multiple simplifications
   (check-equal?
-   rows(1)(x2(x3(x4(k(1) k(1)))))
+   rows(1 #:memo "test of `rows` constructor")(x2(x3(x4(k(1) k(1)))))
    (Rows
     '(1)
-    '((48 . #s(stitch 107 0))) "" 0 48 48 48 48 0 0))
+    '((48 . #s(stitch 107 0))) "test of `rows` constructor" 0 48 48 48 48 0 0))
 
   ;; nonconsecutive rows
   (check-equal?
-   rows(1 3)(p(2))
+   rows(1 3 #:memo "test of `rows` constructor")(p(2))
    (Rows
     '(1 3)
-    '((2 . #s(stitch 112 0))) "" 0 2 2 2 2 0 0))
+    '((2 . #s(stitch 112 0))) "test of `rows` constructor" 0 2 2 2 2 0 0))
 
   ;; variable number repeat evaluates to zero
   (check-equal?
-   rows(1 #:stitches 2)(p(2) k(0))
+   rows(1 #:stitches 2 #:memo "test of `rows` constructor")(p(2) k(0))
    (Rows
     '(1)
-    '((2 . #s(stitch 112 0))) "" 0 2 2 2 2 0 0))
+    '((2 . #s(stitch 112 0))) "test of `rows` constructor" 0 2 2 2 2 0 0))
 
   ;; variable number repeat evaluates negative
   (check-exn
@@ -1718,14 +1730,14 @@
 
   ;; consecutive and conformable
   (check-equal?
-   rows(1 2)(k(2) p(2))
+   rows(1 2 #:memo "test of `rows` constructor")(k(2) p(2))
    (Rows
     '(1 2)
-    '((2 . #s(stitch 107 0)) (2 . #s(stitch 112 0))) "" 0 4 4 4 4 0 0))
+    '((2 . #s(stitch 107 0)) (2 . #s(stitch 112 0))) "test of `rows` constructor" 0 4 4 4 4 0 0))
 
   ;; consecutive and conformable, memo, repeated and list-format row numbers
   (check-equal?
-   rows('(1 2) '(1) #:memo "new memo")(p(2) repeat(yo x3(bo(2)) twice(yo)) x3(cdd))
+   rows('(1 2) '(1) #:memo "test of `rows` constructor")(p(2) repeat(yo x3(bo(2)) twice(yo)) x3(cdd))
    (Rows
     '(1 2)
     '((2 . #s(stitch 112 0))
@@ -1733,7 +1745,7 @@
        (1 . #s(stitch 111 0))
        (3 (2 . #s(stitch 84 0)))
        (2 (1 . #s(stitch 111 0))))
-      (3 (1 . #s(stitch 106 0)))) "new memo" 0 0 0 11 5 6 3))
+      (3 (1 . #s(stitch 106 0)))) "test of `rows` constructor" 0 0 0 11 5 6 3))
 
   ;; consecutive but not conformable
   (check-exn
@@ -1753,20 +1765,54 @@
    (lambda ()
      rows(null)(k(1))))
 
+
   ;; tests of yarn functions
   (log-knitscheme-debug "start of tests of yarn functions")
 
+  ;; MC is default yarn
   (check-equal?
-   rows(1)(cc9(k(1)))
+   rows(1 #:memo "test of yarn function")(cc1(k(1)))
    (Rows
     '(1)
-    '((1 . #s(stitch 107 9))) "" 0 1 1 1 1 0 0))
+    '((1 . #s(stitch 107 1))) "test of yarn function" 0 1 1 1 1 0 0))
 
+  ;; yarn 0 is MC
   (check-equal?
-   rows(1)(mc(cc9(k(1))))
+   rows(1 #:yarn 0 #:memo "test of yarn function")(cc2(k(1)))
    (Rows
     '(1)
-    '((1 . #s(stitch 107 0))) "" 0 1 1 1 1 0 0))
+    '((1 . #s(stitch 107 2))) "test of yarn function" 0 1 1 1 1 0 0))
+
+  ;; innermost yarn specification has priority
+  (check-equal?
+   rows(1 #:memo "test of yarn function")(mc(cc3(k(1))))
+   (Rows
+    '(1)
+    '((1 . #s(stitch 107 3))) "test of yarn function" 0 1 1 1 1 0 0))
+
+  ;; row #:yarn specification cedes priority
+  (check-equal?
+   rows(1 #:yarn 1 #:memo "test of yarn function")(k(1) cc4(p(1)))
+   (Rows
+    '(1)
+    '((1 . #s(stitch 107 1))
+      (1 . #s(stitch 112 4))) "test of yarn function" 1 2 2 2 2 0 0))
+
+  ;; row #:yarn specification cedes priority
+  (check-equal?
+   rows(1 #:yarn 5 #:memo "test of yarn function")(mc(k(1)) p(1))
+   (Rows
+    '(1)
+    '((1 . #s(stitch 107 0))
+      (1 . #s(stitch 112 5))) "test of yarn function" 5 2 2 2 2 0 0))
+
+  ;; row #:yarn #f specification destroys inner yarn specifications
+  (check-equal?
+   rows(1 #:yarn #f #:memo "test of yarn function")(cc6(k(1)) cc7(p(1)))
+   (Rows
+    '(1)
+    '((1 . #s(stitch 107 #f))
+      (1 . #s(stitch 112 #f))) "test of yarn function" #f 2 2 2 2 0 0))
 
   ;; FIXME need more tests of yarn functions
 
@@ -1775,9 +1821,10 @@
 
   ;; keywords, single row
   (check-equal?
-   (pattern #:technology 'hand #:startface 'ws #:startside 'left rows(1 #:memo "memo")(k(1)))
+   (pattern #:technology 'hand #:startface 'ws #:startside 'left
+            rows(1 #:memo "test of `pattern` constructor")(k(1)))
    (Pattern
-    (vector (Rowinfo '((1 . #s(stitch 107 0))) "memo" 0 1 1 0 0 0 0))
+    (vector (Rowinfo '((1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 1 1 0 0 0 0))
     (Rowmap '#(#(1)) 1)
     'hand
     'flat
@@ -1790,18 +1837,20 @@
   (check-exn
    exn:fail?
    (lambda ()
-     (pattern #:technology 'machine #:geometry 'circular rows(1)(k(1)))))
+     (pattern #:technology 'machine #:geometry 'circular
+              rows(1 #:memo "test of `pattern` constructor")(k(1)))))
 
   ;; variable repeat leaf, number of stitches supplied
   (check-equal?
-   (pattern rows(1 3 #:stitches 2)(k(0) m) rows(2 4)(k2tog))
+   (pattern rows(1 3 #:stitches 2 #:memo "test of `pattern` constructor")(k(0) m)
+            rows(2 4 #:memo "test of `pattern` constructor")(k2tog))
    (Pattern
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
-        (1 . #s(stitch 62 0))) "" 0 1 2 0 0 0 0)
+        (1 . #s(stitch 62 0))) "test of `pattern` constructor" 0 1 2 0 0 0 0)
      (Rowinfo
-      '((1 . #s(stitch 85 0))) "" 0 2 1 0 0 0 0))
+      '((1 . #s(stitch 85 0))) "test of `pattern` constructor" 0 2 1 0 0 0 0))
     (Rowmap '#(#(1 3) #(2 4)) 4)
     'machine
     'flat
@@ -1812,12 +1861,12 @@
 
   ;; variable repeat leaf nested in node, number of stitches supplied
   (check-equal?
-   (pattern rows(1 #:stitches 9)(x3(k(1) p)))
+   (pattern rows(1 #:stitches 9 #:memo "test of `pattern` constructor")(x3(k(1) p)))
    (Pattern
     (vector
      (Rowinfo
       '((3 (1 . #s(stitch 107 0))
-           (2 . #s(stitch 112 0)))) "" 0 9 9 0 0 0 0))
+           (2 . #s(stitch 112 0)))) "test of `pattern` constructor" 0 9 9 0 0 0 0))
     (Rowmap '#(#(1)) 1)
     'machine
     'flat
@@ -1828,13 +1877,14 @@
 
   ;; variable repeat node, number of stitches supplied, variable repeat replaced in Rows struct guard function
   (check-equal?
-   (pattern #:technology 'hand #:geometry 'circular rows(seq(1 4) #:stitches 8)(k(1) repeat(k(1) p(1)) k(1)))
+   (pattern #:technology 'hand #:geometry 'circular
+            rows(seq(1 4) #:stitches 8 #:memo "test of `pattern` constructor")(k(1) repeat(k(1) p(1)) k(1)))
    (Pattern
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
         (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0))
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0))
     (Rowmap '#(#(1 2 3 4)) 4)
     'hand
     'circular
@@ -1846,18 +1896,18 @@
   ;; variable repeat node, number of stitches supplied
   (check-equal?
    (pattern #:technology 'hand #:geometry 'flat
-            rows(1 3 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
-            rows(2 4)(k(1) repeat(p(1) k(1)) k(1)))
+            rows(1 3 #:stitches 8 #:memo "test of `pattern` constructor")(k(1) repeat(k(1) p(1)) k(1))
+            rows(2 4 #:memo "test of `pattern` constructor")(k(1) repeat(p(1) k(1)) k(1)))
    (Pattern
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
         (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
      (Rowinfo
       '((1 . #s(stitch 107 0))
         (3 (1 . #s(stitch 112 0)) (1 . #s(stitch 107 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0))
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0))
     (Rowmap '#(#(1 3) #(2 4)) 4)
     'hand
     'flat
@@ -1866,31 +1916,29 @@
     #f
     '#(#f)))
 
-  ;; repeated application of constraints
+  ;; repeated application of constraints and simplifications
   (check-equal?
    (pattern #:technology 'hand #:geometry 'flat
-            rows(1 5 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
-            rows(2 6)(k(1) repeat(p(1) k(1)) k(1))
-            rows(3 7)(k(1) repeat(k(2)) k(1))
-            rows(4 8)(k(1) repeat(p(2)) k(1)))
+            rows(1 5 #:stitches 8 #:memo "test of `pattern` constructor")(k(1) repeat(k(1) p(1)) k(1))
+            rows(2 6 #:memo "test of `pattern` constructor")(k(1) repeat(p(1) k(1)) k(1))
+            rows(3 7 #:memo "test of `pattern` constructor")(k(1) x1(repeat(k(1) k(1))) x1(k(1)))
+            rows(4 8 #:memo "test of `pattern` constructor")(k(1) repeat(p(2)) k(1)))
    (Pattern
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
         (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
      (Rowinfo
       '((1 . #s(stitch 107 0))
         (3 (1 . #s(stitch 112 0)) (1 . #s(stitch 107 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
+     (Rowinfo
+      '((8 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
      (Rowinfo
       '((1 . #s(stitch 107 0))
-        (3 (2 . #s(stitch 107 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
-     (Rowinfo
-      '((1 . #s(stitch 107 0))
-        (3 (2 . #s(stitch 112 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0))
+        (6 . #s(stitch 112 0))
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0))
     (Rowmap '#(#(1 5) #(2 6) #(3 7) #(4 8)) 8)
     'hand
     'flat
@@ -1902,30 +1950,28 @@
   ;; repeated application of constraints, last line outputs zero stitches
   (check-equal?
    (pattern #:technology 'hand #:geometry 'flat
-            rows(1 5 #:stitches 8)(k(1) repeat(k(1) p(1)) k(1))
-            rows(2 6)(k(1) repeat(p(1) k(1)) k(1))
-            rows(3 7)(k(1) repeat(k(2)) k(1))
-            rows(4 8)(k(1) repeat(p(2)) k(1))
-            row(9)(bo))
+            rows(1 5 #:memo "test of `pattern` constructor")(k(1) repeat(k(1) p(1)) k(1))
+            rows(2 6 #:memo "test of `pattern` constructor")(k(1) repeat(p(1) k(1)) k(1))
+            rows(3 7 #:memo "test of `pattern` constructor")(k(1) repeat(k(2)) k(1))
+            rows(4 8 #:memo "test of `pattern` constructor")(k(1) repeat(p(2)) k(1))
+            row(9 #:memo "test of `pattern` constructor")(bo(8)))
    (Pattern
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
         (3 (1 . #s(stitch 107 0)) (1 . #s(stitch 112 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
      (Rowinfo
       '((1 . #s(stitch 107 0))
         (3 (1 . #s(stitch 112 0)) (1 . #s(stitch 107 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
+     (Rowinfo
+      '((8 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
      (Rowinfo
       '((1 . #s(stitch 107 0))
-        (3 (2 . #s(stitch 107 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
-     (Rowinfo
-      '((1 . #s(stitch 107 0))
-        (3 (2 . #s(stitch 112 0)))
-        (1 . #s(stitch 107 0))) "" 0 8 8 0 0 0 0)
-     (Rowinfo '((8 . #s(stitch 84 0))) "" 0 8 0 0 0 0 0))
+        (6 . #s(stitch 112 0))
+        (1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 8 8 0 0 0 0)
+     (Rowinfo '((8 . #s(stitch 84 0))) "test of `pattern` constructor" 0 8 0 0 0 0 0))
     (Rowmap '#(#(1 5) #(2 6) #(3 7) #(4 8) #(9)) 9)
     'hand
     'flat
@@ -1936,14 +1982,15 @@
 
   ;; constrained by stitches out
   (check-equal?
-   (pattern rows(1)(k(0) m) rows(2)(k2tog))
+   (pattern rows(1 #:memo "test of `pattern` constructor")(k(0) m)
+            rows(2 #:memo "test of `pattern` constructor")(k2tog))
    (Pattern
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
-        (1 . #s(stitch 62 0))) "" 0 1 2 0 0 0 0)
+        (1 . #s(stitch 62 0))) "test of `pattern` constructor" 0 1 2 0 0 0 0)
      (Rowinfo
-      '((1 . #s(stitch 85 0))) "" 0 2 1 0 0 0 0))
+      '((1 . #s(stitch 85 0))) "test of `pattern` constructor" 0 2 1 0 0 0 0))
     (Rowmap '#(#(1) #(2)) 2)
     'machine
     'flat
@@ -1954,14 +2001,15 @@
 
   ;; constrained by stitches in
   (check-equal?
-   (pattern rows(1)(k2tog) rows(2)(k(0) m))
+   (pattern rows(1 #:memo "test of `pattern` constructor")(k2tog)
+            rows(2 #:memo "test of `pattern` constructor")(k(0) m))
    (Pattern
     (vector
      (Rowinfo
-      '((1 . #s(stitch 85 0))) "" 0 2 1 0 0 0 0)
+      '((1 . #s(stitch 85 0))) "test of `pattern` constructor" 0 2 1 0 0 0 0)
      (Rowinfo
       '((1 . #s(stitch 107 0))
-        (1 . #s(stitch 62 0))) "" 0 1 2 0 0 0 0))
+        (1 . #s(stitch 62 0))) "test of `pattern` constructor" 0 1 2 0 0 0 0))
     (Rowmap '#(#(1) #(2)) 2)
     'machine
     'flat
@@ -1972,14 +2020,15 @@
 
   ;; constrained by both stitches in and stitches out
   (check-equal?
-   (pattern rows(1 3 5)(k2tog) rows(2 4)(k(0) m))
+   (pattern rows(1 3 5 #:memo "test of `pattern` constructor")(k2tog)
+            rows(2 4 #:memo "test of `pattern` constructor")(k(0) m))
    (Pattern
     (vector
      (Rowinfo
-      '((1 . #s(stitch 85 0))) "" 0 2 1 0 0 0 0)
+      '((1 . #s(stitch 85 0))) "test of `pattern` constructor" 0 2 1 0 0 0 0)
      (Rowinfo
       '((1 . #s(stitch 107 0))
-        (1 . #s(stitch 62 0))) "" 0 1 2 0 0 0 0))
+        (1 . #s(stitch 62 0))) "test of `pattern` constructor" 0 1 2 0 0 0 0))
     (Rowmap '#(#(1 3 5) #(2 4)) 5)
     'machine
     'flat
@@ -1990,11 +2039,12 @@
 
   ;; variable repeat evaluates to zero
   (check-equal?
-   (pattern rows(1)(p(1) k(0)) rows(2)(p(1)))
+   (pattern rows(1 #:memo "test of `pattern` constructor")(p(1) k(0))
+            rows(2 #:memo "test of `pattern` constructor")(p(1)))
    (Pattern
     (vector
-     (Rowinfo '((1 . #s(stitch 112 0))) "" 0 1 1 0 0 0 0)
-     (Rowinfo '((1 . #s(stitch 112 0))) "" 0 1 1 0 0 0 0))
+     (Rowinfo '((1 . #s(stitch 112 0))) "test of `pattern` constructor" 0 1 1 0 0 0 0)
+     (Rowinfo '((1 . #s(stitch 112 0))) "test of `pattern` constructor" 0 1 1 0 0 0 0))
     (Rowmap '#(#(1) #(2)) 2)
     'machine
     'flat
@@ -2052,7 +2102,7 @@
      (pattern rows(1 3)(k(1) m) rows(2 5)(k2tog))))
 
   ;; tests of `yarns->text` function
-  (log-knitscheme-debug "start tests of `yarntype->text` function")
+  (log-knitscheme-debug "start tests of `yarns->text` function")
 
   (check-equal?
    (yarns->text '#())

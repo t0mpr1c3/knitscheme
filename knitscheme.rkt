@@ -254,6 +254,7 @@
   ;; leaf functions
   (define-predicate Leaf? Leaf)
 
+  ;; constructor
   (: make-leaf : (Natural stitch -> Leaf))
   (define (make-leaf n st)
     (cons n st))
@@ -287,6 +288,7 @@
   ;; node functions
   (define-predicate Node? Node)
 
+  ;; constructor
   (: make-node : (Natural Tree -> Node))
   (define (make-node n tree)
     (cons n tree))
@@ -302,6 +304,7 @@
   ;; tree functions
   (define-predicate Tree? Tree)
 
+  ;; constructor
   (: make-tree : ((U Leaf Node) (U Leaf Node) * -> Tree))
   (define (make-tree . xs) xs)
 
@@ -471,6 +474,35 @@
     #:prefab)
 
   ;; yarn functions
+
+  ;; constructor
+  (: make-yarn : (->* () (String String String String) yarntype))
+  (define (make-yarn [color : String ""]
+                     [weight : String ""]
+                     [fiber : String ""]
+                     [brand : String ""])
+    (yarntype color weight fiber brand))
+
+  (: yarns : ((Listof String) (Listof String) * -> (Immutable-Vectorof yarntype)))
+  (define (yarns . ys)
+    (vector->immutable-vector
+     (list->vector
+      (reverse
+       ((inst foldl (Listof String) (Listof yarntype))
+        (lambda (x y)
+          (cons
+           ((lambda (x)
+              (match x
+                [(list a b c d e ...) (make-yarn a b c d)] ; discard additional strings
+                [(list a b c)         (make-yarn a b c)]
+                [(list a b)           (make-yarn a b)]
+                [(list a)             (make-yarn a)]
+                [null                 (make-yarn)]))
+            x)
+           y))
+        null
+        ys)))))
+
   (: with-yarn : (Byte -> Symbol))
   (define (with-yarn n)
     (if (zero? n)
@@ -516,6 +548,23 @@
     (and
      (> (length rownums) 1)
      (= 1 (apply min (diff - rownums)))))
+
+  ;; Rownums type
+  (define-type Rownums (U Positive-Index Rownums-like))
+  (define-type Rownums-like (Listof (U Positive-Index Rownums-like)))
+
+  ;; flatten rownums to list
+  ;; not concerned about order
+  (: flatten-rownums : (Rownums-like -> (Listof Positive-Index)))
+  (define (flatten-rownums xs)
+     ((inst foldl Rownums (Listof Positive-Index))
+      (lambda ([x : Rownums]
+               [y : (Listof Positive-Index)])
+        (if (number? x)
+            (cons x y)
+            (append (flatten-rownums x) y)))
+      null
+      xs))
 
   ;; row struct
   (struct Rows
@@ -589,7 +638,7 @@
                               stitches-in-var
                               stitches-out-var)
     ;; check valid row numbers exist
-    (let ([rownums~ (sort (uniq (cast (flatten rownums) (Listof Positive-Index))) <)])
+    (let ([rownums~ (sort (uniq rownums) <)])
       (if (zero? (length rownums~))
           (error "no row numbers specified")
           (values rownums~
@@ -889,7 +938,7 @@
 
   ;; alternative constructor
   (: rows : (->* () (#:memo String #:stitches Natural #:yarn (Option Byte))
-                 #:rest (U Positive-Index (Listof Positive-Index))
+                 #:rest Rownums
                  (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Rows)))
   (define ((rows #:memo [memo : String ""]
                  #:stitches [stitches-out-total : Natural 0]
@@ -897,7 +946,7 @@
                  . rownums) . xs)
     (log-knitscheme-debug "in `rows` constructor")
     (Rows
-     (cast (flatten rownums) (Listof Positive-Index))
+     (flatten-rownums rownums)
      (yarn y)(xs)
      memo
      y
@@ -1280,7 +1329,7 @@
                          (vector->list (vector-ref (Rowmap-data rownums) i)))])
       (if (not (null? var-rownums))
           (error (string-append "unconstrained variable repeat in row"
-                                (format-rows (sort (cast (flatten var-rownums) (Listof Positive-Index)) <))))
+                                (format-rows (sort (flatten-rownums var-rownums) <))))
           ;; result
           (values rowinfo rownums technology geometry startface startside gauge yarns))))
   
@@ -2220,11 +2269,11 @@
   (log-knitscheme-info "tests completed"))
 
 
-;; demo of pattern->text output
+;; demo of `yarns` function and `pattern->text` output
 (define pattern1
   (pattern #:technology 'hand #:geometry 'flat
-           #:yarns '#(#s(yarntype "unknown" "acrylic" "worsted" "white")
-                      #s(yarntype "unknown" "acrylic" "worsted" "black"))
+           #:yarns yarns('("white" "worsted" "acrylic" "unknown")
+                         '("black" "worsted" "acrylic" "unknown"))
            rows(2 5)(k1 repeat(k1 p1) k1)
            rows(8 #:memo "last row")(bo)
            rows(1 3 #:memo "some annotation here")(k2 p1 cc1(p3))

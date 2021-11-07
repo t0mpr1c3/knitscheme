@@ -44,16 +44,15 @@
 
   ;; index of first non-false element of vector
   (: vector-which : ((Vectorof Any) -> (U Index False)))
-  (define (vector-which xs)
-    (let ([res
-           (for/list : (Listof Index)
-             ([i (vector->list xs)]
-              [j (range (vector-length xs))]
-              #:when (not (equal? i #f)))
-             (cast j Index))])
-      (if (null? res)
+  (define (vector-which vec)
+    (let loop ([xs : (list->vector vec)]
+               [i : Index 0])
+      (let ([x (car xs)]
+      (if (null? x)
           #f
-          (car res))))
+          {if (not (false? x))
+              i
+              (loop (cdr xs) (add1 i))})))))
 
   ;; format row output
   (: format-rows : ((Listof Positive-Index) -> String))

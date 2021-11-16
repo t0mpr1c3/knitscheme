@@ -1,7 +1,10 @@
 #lang knit typed/racket
+(provide (all-defined-out)
+         (all-from-out 'knitscheme-base-submodule))
+
 (require typed/racket)
 
-;; FIXME view/print methods not implemented
+;; FIXME refactor pattern etc as classes
 ;; FIXME knitspeak parser not implemented
 ;; FIXME knitout output not implemented
 ;; FIXME improve error messages/exception handling
@@ -12,9 +15,10 @@
 ;; FIXME is there a better way than this to set compile-time variables?
 (define _TEST_ #t)
 
-(module knitstructs typed/racket
+(module knitscheme-base-submodule typed/racket
   (require typed/racket
-           racket/list) ; needed for `flatten`, `range`
+           racket/vector ; needed for `vector-map`
+           racket/list) ; needed for `flatten` `range`
   (provide (all-defined-out))
 
   ;; define knitscheme-logger for debugging purposes
@@ -22,7 +26,7 @@
   (define-logger knitscheme)
   (define knitscheme-receiver (make-log-receiver knitscheme-logger 'info))
   (log-knitscheme-info "knitscheme-logger initialized")
-  (log-knitscheme-debug "starting knit-structs module definition")
+  (log-knitscheme-debug "starting knitscheme-base-submodule module definition")
 
   ;; restrict list to unique elements
   (: uniq : (All (A) (Listof A) -> (Listof A)))
@@ -40,19 +44,31 @@
   ;; sum of elements
   (: sum : ((Listof Number) -> Number))
   (define (sum xs)
-    (foldl + 0 xs))
+    (apply + xs))
 
   ;; index of first non-false element of vector
   (: vector-which : ((Vectorof Any) -> (U Index False)))
   (define (vector-which vec)
-    (let loop ([xs : (list->vector vec)]
-               [i : Index 0])
-      (let ([x (car xs)]
-      (if (null? x)
-          #f
-          {if (not (false? x))
-              i
-              (loop (cdr xs) (add1 i))})))))
+    (let loop ([xs (vector->list vec)]
+               [i : Natural 0])
+      (let ([x (car xs)])
+        (if (null? x)
+            #f
+            (if (not (false? x))
+                (cast i Index)
+                (loop (cdr xs) (add1 i)))))))
+
+  ;; find index of largest element in list
+  (: which-max : ((Listof Real) -> Index))
+  (define (which-max xs)
+    (argmax (λ ([i : Index]) (list-ref xs i))
+            (range (length xs))))
+
+  ;; find index of smallest element in list
+  (: which-min : ((Listof Real) -> Index))
+  (define (which-min xs)
+    (argmin (λ ([i : Index]) (list-ref xs i))
+            (range (length xs))))
 
   ;; format row output
   (: format-rows : ((Listof Positive-Index) -> String))
@@ -70,6 +86,11 @@
                                           (format " and ~a" (car end))))
                          (format " ~a" (car xs))))))
 
+  ;; reverse bytes
+  (: bytes-reverse : (Bytes -> Bytes))
+  (define (bytes-reverse b)
+    (list->bytes (reverse (bytes->list b))))
+
   ;; stitch definitions
   ;; NB symbols are based on Stitchmastery Dash font
 
@@ -79,6 +100,7 @@
      [ws-symbol : Byte]
      [stitches-in : Natural]
      [stitches-out : Natural]
+     [offset : Integer]
      [id : String]
      [name : String]
      [rx : PRegexp]
@@ -90,43 +112,46 @@
     (list
 
      ;; variable repeat stitches
-     (stitchtype #x6b #x70 1 1 "k"    "knit"       #px"k(nit ?)?_" #t #t)
-     (stitchtype #x70 #x6b 1 1 "p"    "purl"       #px"p(url ?)?_" #t #t)
-     (stitchtype #x6e #x3f 1 1 "ktbl" "knit-tbl"   #px"k(nit ?)?_ ?tbl" #t #t)
-     (stitchtype #x3f #x6e 1 1 "ptbl" "purl-tbl"   #px"p(url ?)?_ ?tbl" #t #t)
-     (stitchtype #x21 #x25 1 1 "kb"   "knit-below" #px"k(nit ?)?_ ?b(elow)?" #t #t)
-     (stitchtype #x25 #x21 1 1 "pb"   "purl-below" #px"p(url ?)?_ ?b(elow)?" #t #t)
-     (stitchtype #x54 #x54 1 0 "bo"   "bind-off"   #px"b(ind ?off|o) ?_" #t #t)
+     (stitchtype #x6b #x70 1 1  0 "k"    "knit"       #px"k(nit ?)?_" #t #t)
+     (stitchtype #x70 #x6b 1 1  0 "p"    "purl"       #px"p(url ?)?_" #t #t)
+     (stitchtype #x6e #x3f 1 1  0 "ktbl" "knit-tbl"   #px"k(nit ?)?_ ?tbl" #t #t)
+     (stitchtype #x3f #x6e 1 1  0 "ptbl" "purl-tbl"   #px"p(url ?)?_ ?tbl" #t #t)
+     (stitchtype #x21 #x25 1 1  0 "kb"   "knit-below" #px"k(nit ?)?_ ?b(elow)?" #t #t)
+     (stitchtype #x25 #x21 1 1  0 "pb"   "purl-below" #px"p(url ?)?_ ?b(elow)?" #t #t)
+     (stitchtype #x54 #x54 1 0  0 "bo"   "bind-off"   #px"b(ind ?off|o) ?_" #t #t)
 
      ;; repeatable stitches;
-     (stitchtype #x2a #x51 1 1 "slwyib" "slip-wyib" #px"sl(ip ?)?_ ?wyib" #t #f)
-     (stitchtype #x51 #x2a 1 1 "slwyif" "slip-wyif" #px"sl(ip ?)?_ ?wyif" #t #f)
-     (stitchtype #xbc #xbc 0 1 "co"     "cast-on"   #px"c(ast ?on|o) ?_" #t #f)
+     (stitchtype #x2a #x51 1 1  0 "slwyib" "slip-wyib" #px"sl(ip ?)?_ ?wyib" #t #f)
+     (stitchtype #x51 #x2a 1 1  0 "slwyif" "slip-wyif" #px"sl(ip ?)?_ ?wyif" #t #f)
+     (stitchtype #xbc #xbc 0 1  0 "co"     "cast-on"   #px"c(ast ?on|o) ?_" #t #f)
 
      ;; unrepeatable stitches
-     (stitchtype #x2c #x2c 1 0 "drop"  "drop-stitch"              #px"drop st(itch)" #f #f)
-     (stitchtype #x55 #x57 2 1 "k2tog" "knit-two-together"        #px"k(nit ?)?2 ?tog(ether)?" #f #f)
-     (stitchtype #x57 #x55 2 1 "p2tog" "purl-two-together"        #px"p(url ?)?2 ?tog(ether)?" #f #f)
-     (stitchtype #x73 #x75 3 1 "k3tog" "knit-three-together"      #px"k(nit ?)?3 ?tog(ether)?" #f #f)
-     (stitchtype #x75 #x73 3 1 "p3tog" "purl-three-together"      #px"p(url ?)?3 ?tog(ether)?" #f #f)
-     (stitchtype #x56 #x58 2 1 "ssk"   "slip-slip-knit"           #px"ssk" #f #f)
-     (stitchtype #x58 #x56 2 1 "ssp"   "slip-slip-purl"           #px"ssp" #f #f)
-     (stitchtype #x74 #x76 3 1 "sssk"  "slip-slip-slip-knit"      #px"sssk" #f #f)
-     (stitchtype #x76 #x74 3 1 "sssp"  "slip-slip-slip-purl"      #px"sssp" #f #f)
-     (stitchtype #x6f #x6f 0 1 "yo"    "yarn-over"                #px"y(arn ?over|o)" #f #f)
-     (stitchtype #x41 #x41 0 2 "dyo"   "double-yarn-over"         #px"d((ouble|bl) yarn ?over|yo)" #f #f)
-     (stitchtype #x6a #x6a 3 1 "cdd"   "centered-double-decrease" #px"c((enter(ed)?|tr) d(ouble|bl) dec(rease)?|dd)" #f #f)
-     (stitchtype #x3a #x78 0 1 "ml"    "make-left"                #px"m(ake ?)?_ ?l(eft)?" #f #f)
-     (stitchtype #x78 #x3a 0 1 "mlp"   "make-left-purlwise"       #px"m(ake ?)?_ ?l((eft)? (pw?|url(wise)?)|p)" #f #f)
-     (stitchtype #x3b #x79 0 1 "mr"    "make-right"               #px"m(ake ?)?_ ?r(ight)?" #f #f)
-     (stitchtype #x79 #x3b 0 1 "mrp"   "make-right-purlwise"      #px"m(ake ?)?_ ?r((ight)? (pw?|url(wise)?)|p)" #f #f)
-     (stitchtype #x3e #x40 0 1 "m"     "make"                     #px"m(ake ?)?_" #f #f)
-     (stitchtype #x40 #x3e 0 1 "mp"    "make-purlwise"            #px"m(ake ?)?_ ?(pw?|url(wise)?)" #f #f)
-     (stitchtype #x4c #x7d 1 3 "kyk"   "k1-yo-k1-in-next-stitch"  #px"k(nit ?)?1,? y(arn ?over|o),? k(nit ?)?1 in(to)? next st(itch)?" #f #f)
-     (stitchtype #x7d #x4c 1 3 "pyp"   "p1-yo-p1-in-next-stitch"  #px"p(url ?)?1,? y(arn ?over|o),? p(url ?)?1 in(to)? next st(itch)?" #f #f)
-     (stitchtype #x69 #x69 1 3 "cdi"   "centered-double-increase" #px"c((enter(ed)?|tr) d(ouble|bl) inc(rease)?|dd)" #f #f)
-     (stitchtype #xbf #xbf 1 1 "mb"    "make-bobble"              #px"m(ake bobble|b)" #f #f)
-     (stitchtype #x50 #x4f 0 0 "w&t"   "wrap-and-turn"            #px"w(rap( and |&)turn|&t)" #f #f)))
+     (stitchtype #x2c #x2c 1 0  0 "dropst" "drop-stitch"              #px"drop st(itch)" #f #f)
+     (stitchtype #x55 #x57 2 1  1 "k2tog"  "knit-two-together"        #px"k(nit ?)?2 ?tog(ether)?" #f #f)
+     (stitchtype #x57 #x55 2 1  1 "p2tog"  "purl-two-together"        #px"p(url ?)?2 ?tog(ether)?" #f #f)
+     (stitchtype #x73 #x75 3 1  2 "k3tog"  "knit-three-together"      #px"k(nit ?)?3 ?tog(ether)?" #f #f)
+     (stitchtype #x75 #x73 3 1  2 "p3tog"  "purl-three-together"      #px"p(url ?)?3 ?tog(ether)?" #f #f)
+     (stitchtype #x56 #x58 2 1 -1 "ssk"    "slip-slip-knit"           #px"ssk" #f #f)
+     (stitchtype #x58 #x56 2 1 -1 "ssp"    "slip-slip-purl"           #px"ssp" #f #f)
+     (stitchtype #x74 #x76 3 1 -2 "sssk"   "slip-slip-slip-knit"      #px"sssk" #f #f)
+     (stitchtype #x76 #x74 3 1 -2 "sssp"   "slip-slip-slip-purl"      #px"sssp" #f #f)
+     (stitchtype #x6a #x6a 3 1  0 "cdd"    "centered-double-decrease" #px"c((enter(ed)?|tr) d(ouble|bl) dec(rease)?|dd)" #f #f)
+     (stitchtype #x6f #x6f 0 1  0 "yo"     "yarn-over"                #px"y(arn ?over|o)" #f #f)
+     (stitchtype #x41 #x41 0 2  0 "dyo"    "double-yarn-over"         #px"d((ouble|bl) yarn ?over|yo)" #f #f)
+     (stitchtype #x3a #x78 0 1 -1 "ml"     "make-left"                #px"m(ake ?)?_ ?l(eft)?" #f #f)
+     (stitchtype #x78 #x3a 0 1 -1 "mlp"    "make-left-purlwise"       #px"m(ake ?)?_ ?l((eft)? (pw?|url(wise)?)|p)" #f #f)
+     (stitchtype #x3b #x79 0 1  1 "mr"     "make-right"               #px"m(ake ?)?_ ?r(ight)?" #f #f)
+     (stitchtype #x79 #x3b 0 1  1 "mrp"    "make-right-purlwise"      #px"m(ake ?)?_ ?r((ight)? (pw?|url(wise)?)|p)" #f #f)
+     (stitchtype #x3e #x40 0 1  0 "m"      "make"                     #px"m(ake ?)?_" #f #f)
+     (stitchtype #x40 #x3e 0 1  0 "mp"     "make-purlwise"            #px"m(ake ?)?_ ?(pw?|url(wise)?)" #f #f)
+     (stitchtype #x4c #x7d 1 3  0 "kyk"    "k1-yo-k1-in-next-stitch"  #px"k(nit ?)?1,? y(arn ?over|o),? k(nit ?)?1 in(to)? next st(itch)?" #f #f)
+     (stitchtype #x7d #x4c 1 3  0 "pyp"    "p1-yo-p1-in-next-stitch"  #px"p(url ?)?1,? y(arn ?over|o),? p(url ?)?1 in(to)? next st(itch)?" #f #f)
+     (stitchtype #x69 #x69 1 3  0 "cdi"    "centered-double-increase" #px"c((enter(ed)?|tr) d(ouble|bl) inc(rease)?|dd)" #f #f)
+     (stitchtype #xbf #xbf 1 1  0 "sp"     "special-stitch"           #px"sp(ecial( st(itch)?)?)?" #f #f) ; make bobble
+     (stitchtype #x50 #x4f 0 0  0 "w&t"    "wrap-and-turn"            #px"w(rap( and |&)turn|&t)" #f #f)
+
+     ;; other
+     (stitchtype #x77 #x77 0 0  0 "ns"   "no-stitch"                 #px"(ns|no st(itch)?)" #f #f)))
 
   (define stitch-hash
     (for/hash : (HashTable Byte stitchtype) ([i (in-range (length stitch-list))])
@@ -163,11 +188,11 @@
   (define (treelike->tree xs)
     (reverse
      (foldl
-      (lambda ([x : (U Leaf Node Treelike)]
-               [y : Tree])
+      (λ ([x : (U Leaf Node Treelike)]
+               [acc : Tree])
         (if (Treelike? x)
-            (append (treelike->tree x) y)
-            (cons x y)))
+            (append (treelike->tree x) acc)
+            (cons x acc)))
       null
       xs)))
 
@@ -228,8 +253,8 @@
   ;; define x1 ... x20
   (define-syntax (define-xns stx)
     (syntax-case stx ()
-      [(_) (let ([xn-id (lambda (i) (format-id stx "x~a" i))])
-             (with-syntax ([((n xn) ...) (map (lambda (j) (list j (xn-id j))) (range 1 21))])
+      [(_) (let ([xn-id (λ (i) (format-id stx "x~a" i))])
+             (with-syntax ([((n xn) ...) (map (λ (j) (list j (xn-id j))) (range 1 21))])
                #'(begin
                    (define xn (times n))
                    ...)))]))
@@ -310,18 +335,17 @@
   ;; count (non-nested) variable repeats in tree
   (: tree-count-var : (Tree -> Natural))
   (define (tree-count-var tree)
-    (foldl (lambda ([x : (U Leaf Node)]
-                    [y : Natural])
+    (foldl (λ ([x : (U Leaf Node)]
+                    [acc : Natural])
              (if (Leaf? x)
                  ;; leaf
                  (if (zero? (leaf-count x))
-                     (add1 y)
-                     y)
+                     (add1 acc)
+                     acc)
                  ;; node
                  (if (zero? (node-count x))
-                     (add1 y)
-                     ;(+ 1 y (tree-count-var (node-tree x)))
-                     (+   y (tree-count-var (node-tree x))))))
+                     (add1 acc)
+                     (+ acc (tree-count-var (node-tree x))))))
            0
            tree))
 
@@ -346,18 +370,18 @@
   (: tree-var-replace : (Tree Natural -> Tree))
   (define (tree-var-replace tree r) : Tree
     (reverse
-     (foldl (lambda ([x : (U Leaf Node)]
-                     [y : Tree])
+     (foldl (λ ([x : (U Leaf Node)]
+                     [acc : Tree])
               (if (Leaf? x)
                   ;; leaf
                   (if (zero? (leaf-count x))
-                      (cons (make-leaf r (leaf-stitch x)) y)
-                      (cons x y))
+                      (cons (make-leaf r (leaf-stitch x)) acc)
+                      (cons x acc))
                   ;; node
                   (if (zero? (node-count x))
-                      (cons (make-node r (node-tree x)) y)
-                      (cons (make-node (node-count x) (tree-var-replace (node-tree x) r)) y))))
-            (cast null Tree)
+                      (cons (make-node r (node-tree x)) acc)
+                      (cons (make-node (node-count x) (tree-var-replace (node-tree x) r)) acc))))
+            null
             tree)))
 
   ;; recursively combine first by breadth, then by depth, until there are no further changes
@@ -373,29 +397,29 @@
   (: combine-breadth : (Tree -> Tree))
   (define (combine-breadth xs)
     (reverse
-     (foldl (lambda ([x : (U Leaf Node)]
-                     [y : Tree])
+     (foldl (λ ([x : (U Leaf Node)]
+                     [acc : Tree])
               (if (Leaf? x)
                   ;; leaf
                   (let ([n (leaf-count x)])
                     (if (zero? n)
-                        y ; eliminated
-                        (if (null? y)
-                            (cons x y)
-                            (let ([h (car y)])
+                        acc ; eliminated
+                        (if (null? acc)
+                            (cons x acc)
+                            (let ([h (car acc)])
                               (if (not (Leaf? h))
-                                  (cons x y)
+                                  (cons x acc)
                                   (let ([s (leaf-stitch x)])
                                     (if (equal? s (leaf-stitch h))
                                         (cons (make-leaf (+ n (leaf-count h)) s)
-                                              (cdr y))
-                                        (cons x y))))))))
+                                              (cdr acc))
+                                        (cons x acc))))))))
                   ;; node
                   (let ([n (node-count x)])
                     (if (zero? n)
-                        y ; eliminated
+                        acc ; eliminated
                         (cons (make-node n (combine-breadth (node-tree x))) ; match only leaves, not nodes
-                              y)))))
+                              acc)))))
             null
             xs)))
 
@@ -404,11 +428,11 @@
   (: combine-depth : (Tree -> Tree))
   (define (combine-depth xs)
     (reverse
-     (foldl (lambda ([x : (U Leaf Node)]
-                     [y : Tree])
+     (foldl (λ ([x : (U Leaf Node)]
+                     [acc : Tree])
               (if (Leaf? x)
                   ;; leaf
-                  (cons x y)
+                  (cons x acc)
                   ;; node
                   (let node-loop : Tree ([n : Natural (node-count x)]
                                          [t (node-tree x)])
@@ -419,19 +443,19 @@
                               ;; leaf
                               (let ([n~ (leaf-count x~)])
                                 (if (zero? n~)
-                                    y ; eliminated
+                                    acc ; eliminated
                                     (cons (make-leaf (* n n~)
                                                      (leaf-stitch x~))
-                                          y)))
+                                          acc)))
                               ;; node
                               (let ([n~ (node-count x~)])
                                 (if (zero? n~)
-                                    y ; eliminated
+                                    acc ; eliminated
                                     (node-loop (* n n~)
                                                (node-tree x~))))))
                         ;; not singleton node
                         (cons (make-node n (combine-depth t))
-                              y)))))
+                              acc)))))
             null
             xs)))
 
@@ -439,20 +463,20 @@
   ;; ignores variable repeats
   (: flatten-tree-recurse : (Tree -> Tree))
   (define (flatten-tree-recurse tree)
-    (foldl (lambda ([x : (U Leaf Node)]
-                    [y : Tree])
+    (foldl (λ ([x : (U Leaf Node)]
+                    [acc : Tree])
              (if (Leaf? x)
                  ;; leaf
-                 (cons x y)
+                 (cons x acc)
                  ;; node
                  (let loop : Tree
                    ([t : Tree (flatten-tree-recurse (node-tree x))]
                     [n : Natural (node-count x)]
-                    [res : Tree y])
+                    [res : Tree acc])
                    (if (> n 0)
                        (loop t (sub1 n) (append t res))
                        res))))
-           (cast null Tree)
+           null
            tree))
 
   ;; flatten tree to a list of leaves
@@ -486,21 +510,14 @@
   (define (yarns . ys)
     (vector->immutable-vector
      (list->vector
-      (reverse
-       ((inst foldl (Listof String) (Listof yarntype))
-        (lambda (x y)
-          (cons
-           ((lambda (x)
-              (match x
-                [(list a b c d e ...) (make-yarn a b c d)] ; discard additional strings
-                [(list a b c)         (make-yarn a b c)]
-                [(list a b)           (make-yarn a b)]
-                [(list a)             (make-yarn a)]
-                [null                 (make-yarn)]))
-            x)
-           y))
-        null
-        ys)))))
+      (map (λ ([x : (Listof String)])
+             (match x
+               [(list a b c d e ...) (make-yarn a b c d)] ; discard additional strings
+               [(list a b c)         (make-yarn a b c)]
+               [(list a b)           (make-yarn a b)]
+               [(list a)             (make-yarn a)]
+               [null                 (make-yarn)]))
+           ys))))
 
   (: with-yarn : (Byte -> Symbol))
   (define (with-yarn n)
@@ -514,19 +531,19 @@
 
   (: yarn-recurse : ((Option Byte) Tree -> Tree))
   (define (yarn-recurse n xs)
-    (foldl (lambda ([x : (U Leaf Node)]
-                    [y : Tree])
+    (foldl (λ ([x : (U Leaf Node)]
+                    [acc : Tree])
              (if (Leaf? x)
                  ;; leaf
                  (if (or
                       (false? n)
                       (false? (leaf-yarntype x)))
                      (cons (make-leaf (leaf-count x) (stitch (leaf-stitchtype x) n))
-                           y)
-                     (cons x y))
+                           acc)
+                     (cons x acc))
                  ;; node
                  (cons (make-node (node-count x) (reverse (yarn-recurse n (node-tree x))))
-                       y)))
+                       acc)))
            null
            xs))
 
@@ -535,8 +552,8 @@
   ;; macro to define yarn functions cc1 ... cc20
   (define-syntax (define-ccns stx)
     (syntax-case stx ()
-      [(_) (let ([ccn-id (lambda (i) (format-id stx "cc~a" i))])
-             (with-syntax ([((n ccn) ...) (map (lambda (j) (list j (ccn-id j))) (range 1 21))])
+      [(_) (let ([ccn-id (λ (i) (format-id stx "cc~a" i))])
+             (with-syntax ([((n ccn) ...) (map (λ (j) (list j (ccn-id j))) (range 1 21))])
                #'(begin
                    (define ccn (yarn n))
                    ...)))]))
@@ -547,23 +564,6 @@
     (and
      (> (length rownums) 1)
      (= 1 (apply min (diff - rownums)))))
-
-  ;; Rownums type
-  (define-type Rownums (U Positive-Index Rownums-like))
-  (define-type Rownums-like (Listof (U Positive-Index Rownums-like)))
-
-  ;; flatten rownums to list
-  ;; not concerned about order
-  (: flatten-rownums : (Rownums-like -> (Listof Positive-Index)))
-  (define (flatten-rownums xs)
-     ((inst foldl Rownums (Listof Positive-Index))
-      (lambda ([x : Rownums]
-               [y : (Listof Positive-Index)])
-        (if (number? x)
-            (cons x y)
-            (append (flatten-rownums x) y)))
-      null
-      xs))
 
   ;; row struct
   (struct Rows
@@ -578,7 +578,7 @@
      [stitches-in-var : Natural]
      [stitches-out-var : Natural])
     #:guard
-    (lambda (rownums
+    (λ (rownums
              stitches
              memo
              yarn
@@ -935,9 +935,12 @@
   (define (memo m) (string->symbol m))
   |#
 
+  ;; Rownums type
+  (define-type Rownums-input (Listof (U Positive-Index Rownums-input)))
+
   ;; alternative constructor
   (: rows : (->* () (#:memo String #:stitches Natural #:yarn (Option Byte))
-                 #:rest Rownums
+                 #:rest (U Positive-Index Rownums-input)
                  (-> (U Leaf Node Treelike) (U Leaf Node Treelike) * Rows)))
   (define ((rows #:memo [memo : String ""]
                  #:stitches [stitches-out-total : Natural 0]
@@ -945,7 +948,16 @@
                  . rownums) . xs)
     (log-knitscheme-debug "in `rows` constructor")
     (Rows
-     (flatten-rownums rownums)
+     ;; flatten rownums, not concerned about order
+     (let flatten ([xs : Rownums-input rownums]
+                   [acc : (Listof Positive-Index) null])
+       (foldl (λ ([x : (U Positive-Index Rownums-input)]
+                       [acc : (Listof Positive-Index)])
+                (if (number? x)
+                    (cons x acc)
+                    (append (flatten x null) acc)))
+              null
+              xs))
      (yarn y)(xs)
      memo
      y
@@ -980,7 +992,7 @@
      [rowcount : Positive-Integer])
     #:guard
     ;; check validity of row numbers
-    (lambda (data rowcount type-name)
+    (λ (data rowcount type-name)
       (log-knitscheme-debug "in `Rowmap` struct guard function")
       (let ([fl : (Listof Positive-Index) (vector->list (apply vector-append (vector->list data)))])
         (if (> (apply min fl) 1)
@@ -1004,7 +1016,7 @@
            [r : Positive-Index]) : (U Index False)
     (vector-which
      (vector-map
-      (lambda ([rs : (Vectorof Positive-Index)]) (vector-memq r rs))
+      (λ ([rs : (Vectorof Positive-Index)]) (vector-memq r rs))
       (Rowmap-data rowmap))))
 
   ;; gauge
@@ -1018,8 +1030,9 @@
 
   ;; Pattern struct
   (struct Pattern
-    ([rowinfo : (Vectorof Rowinfo)]
-     [rownums : Rowmap]
+    ([name : String]
+     [rowinfos : (Vectorof Rowinfo)]
+     [rowmap : Rowmap]
      [technology : (U 'hand 'machine)]
      [geometry : (U 'flat 'circular)]
      [startface : (U 'rs 'ws)]
@@ -1027,7 +1040,7 @@
      [gauge : (Option Gauge)]
      [yarns : (Immutable-Vectorof (Option yarntype))])
     #:guard
-    (lambda (rowinfo rownums technology geometry startface startside gauge yarns type-name)
+    (λ (name rowinfos rowmap technology geometry startface startside gauge yarns type-name)
       (log-knitscheme-debug "in `Pattern` struct guard function")
       ;; NB composed functions are applied in reverse order
       ((compose pattern-guard-combine-stitches
@@ -1036,11 +1049,12 @@
                 pattern-guard-stitch-counts
                 pattern-guard-yarns
                 pattern-guard-options)
-       rowinfo rownums technology geometry startface startside gauge yarns))
+       name rowinfos rowmap technology geometry startface startside gauge yarns))
     #:transparent)
 
   ;; composable guard function for Pattern struct
-  (: pattern-guard-options : ((Vectorof Rowinfo)
+  (: pattern-guard-options : (String
+                              (Vectorof Rowinfo)
                               Rowmap
                               (U 'hand 'machine)
                               (U 'flat 'circular)
@@ -1048,7 +1062,8 @@
                               (U 'left 'right)
                               (Option Gauge)
                               (Immutable-Vectorof (Option yarntype)) ->
-                              (values (Vectorof Rowinfo)
+                              (values String
+                                      (Vectorof Rowinfo)
                                       Rowmap
                                       (U 'hand 'machine)
                                       (U 'flat 'circular)
@@ -1056,16 +1071,17 @@
                                       (U 'left 'right)
                                       (Option Gauge)
                                       (Immutable-Vectorof (Option yarntype)))))
-  (define (pattern-guard-options rowinfo rownums technology geometry startface startside gauge yarns)
+  (define (pattern-guard-options name rowinfos rowmap technology geometry startface startside gauge yarns)
     ;; circular knitting is for hand knits only, not machine knits
     (if (and
          (eq? technology 'machine)
          (eq? geometry 'circular))
         (error "machine knit patterns must be flat, not circular")
-        (values rowinfo rownums technology geometry startface startside gauge yarns)))
+        (values name rowinfos rowmap technology geometry startface startside gauge yarns)))
 
   ;; composable guard function for Pattern struct
-  (: pattern-guard-yarns : ((Vectorof Rowinfo)
+  (: pattern-guard-yarns : (String
+                            (Vectorof Rowinfo)
                             Rowmap
                             (U 'hand 'machine)
                             (U 'flat 'circular)
@@ -1073,7 +1089,8 @@
                             (U 'left 'right)
                             (Option Gauge)
                             (Immutable-Vectorof (Option yarntype)) ->
-                            (values (Vectorof Rowinfo)
+                            (values String
+                                    (Vectorof Rowinfo)
                                     Rowmap
                                     (U 'hand 'machine)
                                     (U 'flat 'circular)
@@ -1081,14 +1098,15 @@
                                     (U 'left 'right)
                                     (Option Gauge)
                                     (Immutable-Vectorof (Option yarntype)))))
-  (define (pattern-guard-yarns rowinfo rownums technology geometry startface startside gauge yarns)
+  (define (pattern-guard-yarns name rowinfos rowmap technology geometry startface startside gauge yarns)
     ;; maximum number of yarns that can be specified is 256
     (if (> (vector-length yarns) 256)
         (error "too many yarns specified")
-        (values rowinfo rownums technology geometry startface startside gauge yarns)))
+        (values name rowinfos rowmap technology geometry startface startside gauge yarns)))
 
   ;; composable guard function for Pattern struct
-  (: pattern-guard-stitch-counts : ((Vectorof Rowinfo)
+  (: pattern-guard-stitch-counts : (String
+                                    (Vectorof Rowinfo)
                                     Rowmap
                                     (U 'hand 'machine)
                                     (U 'flat 'circular)
@@ -1096,7 +1114,8 @@
                                     (U 'left 'right)
                                     (Option Gauge)
                                     (Immutable-Vectorof (Option yarntype)) ->
-                                    (values (Vectorof Rowinfo)
+                                    (values String
+                                            (Vectorof Rowinfo)
                                             Rowmap
                                             (U 'hand 'machine)
                                             (U 'flat 'circular)
@@ -1104,24 +1123,15 @@
                                             (U 'left 'right)
                                             (Option Gauge)
                                             (Immutable-Vectorof (Option yarntype)))))
-  (define (pattern-guard-stitch-counts rowinfo rownums technology geometry startface startside gauge yarns)
-    (let* ([n-rows : Natural (Rowmap-rowcount rownums)]
+  (define (pattern-guard-stitch-counts name rowinfos rowmap technology geometry startface startside gauge yarns)
+    (let* ([n-rows : Natural (Rowmap-rowcount rowmap)]
            [var-count-total-initial : Natural (* 1000 n-rows)]) ; set to large number initially
       (pattern-guard-stitch-counts-recurse
-       var-count-total-initial rowinfo rownums technology geometry startface startside gauge yarns))
+       var-count-total-initial name rowinfos rowmap technology geometry startface startside gauge yarns)))
 
-    ;[rowdata : (Vectorof Index) ((inst make-vector Index) n-rows 1)]
-    )
-  ;; make lookup table from rows to rowinfo
-  #|
-      (for ([i (in-range (vector-length (Rowmap-data rownums)))])
-        (let ([rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rownums) i)])
-          (for ([j (in-range (vector-length rownums-i))])
-            (vector-set! rowdata (sub1 (vector-ref rownums-i j)) (cast i Index)))))
-      |#
-  
   ;; FIXME remove imperative code
   (: pattern-guard-stitch-counts-recurse : (Natural
+                                            String
                                             (Vectorof Rowinfo)
                                             Rowmap
                                             (U 'hand 'machine)
@@ -1130,7 +1140,8 @@
                                             (U 'left 'right)
                                             (Option Gauge)
                                             (Immutable-Vectorof (Option yarntype)) ->
-                                            (values (Vectorof Rowinfo)
+                                            (values String
+                                                    (Vectorof Rowinfo)
                                                     Rowmap
                                                     (U 'hand 'machine)
                                                     (U 'flat 'circular)
@@ -1139,20 +1150,20 @@
                                                     (Option Gauge)
                                                     (Immutable-Vectorof (Option yarntype)))))
   (define (pattern-guard-stitch-counts-recurse
-           var-count-total-initial rowinfo rownums technology geometry startface startside gauge yarns)
+           var-count-total-initial name rowinfos rowmap technology geometry startface startside gauge yarns)
     (log-knitscheme-debug "in function `pattern-guard-stitch-counts-recurse`")
     ;; recalculate number of variable repeats
-    (let* ([n-rows : Natural (Rowmap-rowcount rownums)]
+    (let* ([n-rows : Natural (Rowmap-rowcount rowmap)]
            [var-count ((inst make-vector Natural) n-rows 0)])
-      (for ([i (in-range (vector-length (Rowmap-data rownums)))])
-        (let* ([rowinfo-i (vector-ref rowinfo i)]
-               [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rownums) i)]
+      (for ([i (in-range (vector-length (Rowmap-data rowmap)))])
+        (let* ([rowinfo-i (vector-ref rowinfos i)]
+               [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rowmap) i)]
                [var-count-row-i (tree-count-var (Rowinfo-stitches rowinfo-i))])
           (for ([j (in-range (vector-length rownums-i))])
             (vector-set! var-count (sub1 (vector-ref rownums-i j)) var-count-row-i))))
       (let ([var-count-total-final (cast (sum (vector->list var-count)) Natural)])
-        (log-knitscheme-debug (~a rowinfo))
-        (log-knitscheme-debug (~a rownums))
+        (log-knitscheme-debug (~a rowinfos))
+        (log-knitscheme-debug (~a rowmap))
         (log-knitscheme-debug (format "var-count-total-initial ~a" var-count-total-initial))
         (log-knitscheme-debug (format "var-count-total-final ~a" var-count-total-final))
         ;; recursion continuation expression
@@ -1168,9 +1179,9 @@
                     [stitches-out-var ((inst make-vector Natural) n-rows 0)]
                     [stitches-in-total ((inst make-vector Natural) n-rows 0)]
                     [stitches-out-total ((inst make-vector Natural) n-rows 0)])
-                (for ([i (in-range (vector-length (Rowmap-data rownums)))])
-                  (let* ([rowinfo-i (vector-ref rowinfo i)]
-                         [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rownums) i)]
+                (for ([i (in-range (vector-length (Rowmap-data rowmap)))])
+                  (let* ([rowinfo-i (vector-ref rowinfos i)]
+                         [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rowmap) i)]
                          [stitches-in-total-row-i (Rowinfo-stitches-in-total rowinfo-i)]
                          [stitches-out-total-row-i (Rowinfo-stitches-out-total rowinfo-i)]
                          [stitches-in-fixed-row-i (Rowinfo-stitches-in-fixed rowinfo-i)]
@@ -1248,10 +1259,10 @@
                                      (not (zero? in-var)))
                                 ;; constraint exists
                                 ;; find rowinfo index k that corresponds to row number i
-                                (let ([k (rowmap-find rownums i)])
+                                (let ([k (rowmap-find rowmap i)])
                                   (if (not k)
                                       (error (format "could not find row ~a in pattern" i))
-                                      (let ([rowinfo-k (vector-ref rowinfo k)]
+                                      (let ([rowinfo-k (vector-ref rowinfos k)]
                                             [qi (quotient (- in-total in-fixed) in-var)])
                                         (if (negative? qi)
                                             (error (format "pattern row ~a has negative value of variable repeat" i))
@@ -1259,7 +1270,7 @@
                                                   [out-total~ (+ out-fixed (* qi out-var))])
                                               (begin
                                                 ;((inst vector-set! Natural) stitches-out-total j out-total~)
-                                                (vector-set! rowinfo k
+                                                (vector-set! rowinfos k
                                                              (Rowinfo
                                                               (if (zero? qi)
                                                                   (combine stitches~) ; eliminate variable repeat evaluated at zero
@@ -1275,36 +1286,35 @@
                                      (not (zero? out-var)))
                                 ;; constraint exists
                                 ;; find rowinfo index k that corresponds to row number i
-                                (let ([k (rowmap-find rownums i)])
+                                (let ([k (rowmap-find rowmap i)])
                                   (if (not k)
                                       (error (format "could not find row ~a in pattern" i))
-                                      (let ([rowinfo-k (vector-ref rowinfo k)]
+                                      (let ([rowinfo-k (vector-ref rowinfos k)]
                                             [qo (quotient (- out-total out-fixed) out-var)])
                                         (if (negative? qo)
                                             (error (format "pattern row ~a has negative value of variable repeat" i))
                                             (let ([stitches~ (tree-var-replace (Rowinfo-stitches rowinfo-k) qo)]
                                                   [in-total~ (+ in-fixed (* qo in-var))])
-                                              (begin
-                                                ;((inst vector-set! Natural) stitches-in-total j in-total~)
-                                                (vector-set! rowinfo k
-                                                             (Rowinfo
-                                                              (if (zero? qo)
-                                                                  (combine stitches~) ; eliminate variable repeat evaluated at zero
-                                                                  stitches~)
-                                                              (Rowinfo-memo rowinfo-k)
-                                                              (Rowinfo-yarn rowinfo-k)
-                                                              in-total~
-                                                              out-total
-                                                              0 0 0 0))))))))))))
+                                              (vector-set! rowinfos k
+                                                           (Rowinfo
+                                                            (if (zero? qo)
+                                                                (combine stitches~) ; eliminate variable repeat evaluated at zero
+                                                                stitches~)
+                                                            (Rowinfo-memo rowinfo-k)
+                                                            (Rowinfo-yarn rowinfo-k)
+                                                            in-total~
+                                                            out-total
+                                                            0 0 0 0)))))))))))
                       (j-loop i))))
                 ;; recurse
                 (pattern-guard-stitch-counts-recurse
-                 var-count-total-final rowinfo rownums technology geometry startface startside gauge yarns)))
+                 var-count-total-final name rowinfos rowmap technology geometry startface startside gauge yarns)))
             ;; exit as we have finished constraining the variable repeats
-            (values rowinfo rownums technology geometry startface startside gauge yarns)))))
+            (values name rowinfos rowmap technology geometry startface startside gauge yarns)))))
   
   ;; composable function as part of Pattern struct guard function
-  (: pattern-guard-unconstrained-var : ((Vectorof Rowinfo)
+  (: pattern-guard-unconstrained-var : (String
+                                        (Vectorof Rowinfo)
                                         Rowmap
                                         (U 'hand 'machine)
                                         (U 'flat 'circular)
@@ -1312,7 +1322,8 @@
                                         (U 'left 'right)
                                         (Option Gauge)
                                         (Immutable-Vectorof (Option yarntype)) ->
-                                        (values (Vectorof Rowinfo)
+                                        (values String
+                                                (Vectorof Rowinfo)
                                                 Rowmap
                                                 (U 'hand 'machine)
                                                 (U 'flat 'circular)
@@ -1320,20 +1331,25 @@
                                                 (U 'left 'right)
                                                 (Option Gauge)
                                                 (Immutable-Vectorof (Option yarntype)))))
-  (define (pattern-guard-unconstrained-var rowinfo rownums technology geometry startface startside gauge yarns)
+  (define (pattern-guard-unconstrained-var name rowinfos rowmap technology geometry startface startside gauge yarns)
     ;; check for unconstrained variable repeats
-    (let ([var-rownums : (Listof (U Positive-Index (Listof Positive-Index)))
-                       (for/list ([i (in-range (vector-length (Rowmap-data rownums)))]
-                                  #:when (not (zero? (tree-count-var (Rowinfo-stitches (vector-ref rowinfo i))))))
-                         (vector->list (vector-ref (Rowmap-data rownums) i)))])
+    (let ([var-rownums : (Listof Positive-Index)
+                       (let loop ([i : Integer (sub1 (vector-length (Rowmap-data rowmap)))]
+                                  [acc : (Listof Positive-Index) null])
+                         (if (negative? i)
+                             acc
+                             (if (zero? (tree-count-var (Rowinfo-stitches (vector-ref rowinfos i))))
+                                 (loop (sub1 i) acc)
+                                 (loop (sub1 i) (append acc (vector->list (vector-ref (Rowmap-data rowmap) i)))))))])
       (if (not (null? var-rownums))
           (error (string-append "unconstrained variable repeat in row"
-                                (format-rows (sort (flatten-rownums var-rownums) <))))
+                                (format-rows (sort var-rownums <))))
           ;; result
-          (values rowinfo rownums technology geometry startface startside gauge yarns))))
+          (values name rowinfos rowmap technology geometry startface startside gauge yarns))))
   
   ;; composable function as part of Pattern struct guard function
-  (: pattern-guard-rows-conformable : ((Vectorof Rowinfo)
+  (: pattern-guard-rows-conformable : (String
+                                       (Vectorof Rowinfo)
                                        Rowmap
                                        (U 'hand 'machine)
                                        (U 'flat 'circular)
@@ -1341,7 +1357,8 @@
                                        (U 'left 'right)
                                        (Option Gauge)
                                        (Immutable-Vectorof (Option yarntype)) ->
-                                       (values (Vectorof Rowinfo)
+                                       (values String
+                                               (Vectorof Rowinfo)
                                                Rowmap
                                                (U 'hand 'machine)
                                                (U 'flat 'circular)
@@ -1349,15 +1366,15 @@
                                                (U 'left 'right)
                                                (Option Gauge)
                                                (Immutable-Vectorof (Option yarntype)))))
-  (define (pattern-guard-rows-conformable rowinfo rownums technology geometry startface startside gauge yarns)
+  (define (pattern-guard-rows-conformable name rowinfos rowmap technology geometry startface startside gauge yarns)
     ;; check that consecutive rows are conformable
-    (let ([n-rows : Natural (Rowmap-rowcount rownums)])
+    (let ([n-rows : Natural (Rowmap-rowcount rowmap)])
       (when (> 1 n-rows)
         (let ([stitches-in-total ((inst make-vector Natural) n-rows 0)]
               [stitches-out-total ((inst make-vector Natural) n-rows 0)])
-          (for ([i (in-range (vector-length (Rowmap-data rownums)))])
-            (let ([rowinfo-i (vector-ref rowinfo i)]
-                  [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rownums) i)])
+          (for ([i (in-range (vector-length (Rowmap-data rowmap)))])
+            (let ([rowinfo-i (vector-ref rowinfos i)]
+                  [rownums-i : (Immutable-Vectorof Index) (vector-ref (Rowmap-data rowmap) i)])
               (let ([stitches-in-total-row-i (Rowinfo-stitches-in-total rowinfo-i)]
                     [stitches-out-total-row-i (Rowinfo-stitches-out-total rowinfo-i)])
                 (for ([j (in-range (vector-length rownums-i))])
@@ -1367,10 +1384,11 @@
                   (not (= (vector-ref stitches-in-total i) (vector-ref stitches-out-total (sub1 i)))))
             (error "pattern rows do not have conformable stitch counts"))))); FIXME identify bad rows in error message
     ;; result
-    (values rowinfo rownums technology geometry startface startside gauge yarns))
+    (values name rowinfos rowmap technology geometry startface startside gauge yarns))
 
   ;; composable function as part of Pattern struct guard function
-  (: pattern-guard-combine-stitches : ((Vectorof Rowinfo)
+  (: pattern-guard-combine-stitches : (String
+                                       (Vectorof Rowinfo)
                                        Rowmap
                                        (U 'hand 'machine)
                                        (U 'flat 'circular)
@@ -1378,7 +1396,8 @@
                                        (U 'left 'right)
                                        (Option Gauge)
                                        (Immutable-Vectorof (Option yarntype)) ->
-                                       (values (Vectorof Rowinfo)
+                                       (values String
+                                               (Vectorof Rowinfo)
                                                Rowmap
                                                (U 'hand 'machine)
                                                (U 'flat 'circular)
@@ -1386,12 +1405,13 @@
                                                (U 'left 'right)
                                                (Option Gauge)
                                                (Immutable-Vectorof (Option yarntype)))))
-  (define (pattern-guard-combine-stitches rowinfo rownums technology geometry startface startside gauge yarns)
+  (define (pattern-guard-combine-stitches name rowinfos rowmap technology geometry startface startside gauge yarns)
     ;; combine repeated stitches / nested singletons
     ;; zero out fixed/var totals
     (values
+     name
      (for/vector : (Vectorof Rowinfo)
-       ([rowinfo-i (vector->list rowinfo)])
+       ([rowinfo-i (vector->list rowinfos)])
        (Rowinfo
         (combine (Rowinfo-stitches rowinfo-i))
         (Rowinfo-memo rowinfo-i)
@@ -1399,10 +1419,11 @@
         (Rowinfo-stitches-in-total rowinfo-i)
         (Rowinfo-stitches-out-total rowinfo-i)
         0 0 0 0))
-     rownums technology geometry startface startside gauge yarns))
+     rowmap technology geometry startface startside gauge yarns))
 
   ;; alternative constructor
-  (: pattern : (->* () (#:technology (U 'hand 'machine)
+  (: pattern : (->* () (#:name String
+                        #:technology (U 'hand 'machine)
                         #:geometry (U 'flat 'circular)
                         #:startface (U 'rs 'ws)
                         #:startside (U 'left 'right)
@@ -1411,6 +1432,7 @@
                     #:rest Rows
                     Pattern))
   (define (pattern
+           #:name [name : String ""]
            #:technology [technology : (U 'hand 'machine) 'machine]
            #:geometry [geometry : (U 'flat 'circular) 'flat]
            #:startface [startface : (U 'rs 'ws) 'rs]
@@ -1421,249 +1443,43 @@
     (log-knitscheme-debug "in `pattern` constructor")
     (let ([rowinfo~
            (list->vector
-            (reverse
-             (foldl (lambda ([x : Rows]
-                             [y : (Listof Rowinfo)])
-                      (cons (Rowinfo
-                             (Rows-stitches x)
-                             (Rows-memo x)
-                             (Rows-yarn x)
-                             (Rows-stitches-in-total x)
-                             (Rows-stitches-out-total x)
-                             (Rows-stitches-in-fixed x)
-                             (Rows-stitches-out-fixed x)
-                             (Rows-stitches-in-var x)
-                             (Rows-stitches-out-var x))
-                            y))
-                    null
-                    rows)))]
+            (map (λ ([x : Rows])
+                   (Rowinfo
+                    (Rows-stitches x)
+                    (Rows-memo x)
+                    (Rows-yarn x)
+                    (Rows-stitches-in-total x)
+                    (Rows-stitches-out-total x)
+                    (Rows-stitches-in-fixed x)
+                    (Rows-stitches-out-fixed x)
+                    (Rows-stitches-in-var x)
+                    (Rows-stitches-out-var x)))
+                 rows))]
           [rowmap~
            (rowmap
             (vector->immutable-vector
              ((inst list->vector (Immutable-Vectorof Positive-Index))
-              (reverse
-               (foldl (lambda ([x : Rows]
-                               [y : (Listof (Immutable-Vectorof Positive-Index))])
-                        (cons
-                         (vector->immutable-vector
-                          ((inst list->vector Positive-Index)
-                           (Rows-rownums x)))
-                         y))
-                      null
-                      rows))))
+              (map (λ ([x : Rows])
+                     (vector->immutable-vector
+                      ((inst list->vector Positive-Index)
+                       (Rows-rownums x))))
+                   rows)))
             1)])
       (log-knitscheme-debug (~a rows))
       (log-knitscheme-debug (~a rowinfo~))
       (log-knitscheme-debug (~a rowmap~))
       ;; result
-      (Pattern rowinfo~ rowmap~ technology geometry startface startside gauge yarns)))
-
-  ;; text output functions
-
-  (: yarn->text : ((Option Byte) -> String))
-  (define (yarn->text y)
-    (if (false? y)
-        ""
-        (if (zero? y)
-            "MC"
-            (format "CC~a" y))))
-
-  (: inyarn->text : ((Option Byte) -> String))
-  (define (inyarn->text y)
-    (if (false? y)
-        ""
-        (string-append "in " (yarn->text y))))
-
-  ;; write paragraph describing yarns
-  ;; commented out code inserts field names into yarn description
-  (: yarns->text : ((Immutable-Vectorof (Option yarntype))-> String))
-  (define (yarns->text yarns)
-    (let ([n (vector-length yarns)])
-      (if (zero? n)
-          ""
-          (string-append
-           "\nYarn:\n"
-           (let loop : String ([i 0]
-                               [res : String ""])
-             (if (< i n)
-                 (loop (add1 i)
-                       (string-append
-                        res
-                        (yarn->text (cast i (Option Byte)))
-                        (let ([yarn-i (vector-ref yarns i)])
-                          (if (false? yarn-i)
-                              ""
-                              (let* ([brand-i (yarntype-brand yarn-i)]
-                                     [fiber-i (yarntype-fiber yarn-i)]
-                                     [weight-i (yarntype-weight yarn-i)]
-                                     [color-i (yarntype-color yarn-i)]
-                                     #| [attr (list "brand" "fiber" "weight" "color")] |#
-                                     [desc (list brand-i fiber-i weight-i color-i)]
-                                     [empty (map (lambda ([x : String]) (string=? "" x))
-                                                 desc)]
-                                     [str (map (lambda ([x : String] #| [y : String] |#)
-                                                 (string-append x #| " " y |#))
-                                               #| attr |#
-                                               desc)]
-                                     [str-pairs (map (inst cons Boolean String)
-                                                     empty
-                                                     str)]
-                                     [str-pairs-filtered (filter (lambda ([x : (Pairof Boolean String)]) (not (car x)))
-                                                                 str-pairs)]
-                                     [str-filtered (map (inst cdr Boolean String)
-                                                        str-pairs-filtered)])
-                                (string-append
-                                 (if (andmap (inst identity Boolean)
-                                             empty)
-                                     ""
-                                     " - ")
-                                 (string-join str-filtered #| ", " |# )))))
-                        "\n"))
-                 res))))))
-
-  ;; chop last letter of string
-  (: string-chop-last : (String -> String))
-  (define (string-chop-last x)
-    (substring x 0 (sub1 (string-length x))))
-
-  ;; format stitch tree for text output
-  (: stitches->text : (Tree -> String))
-  (define (stitches->text tree)
-    (string-chop-last ; remove trailing comma
-     (let x-loop ([z : Tree tree]
-                  [last-yarn : (Option Byte) #f]
-                  [y : String ""])
-       (if (null? z)
-           y
-           (let ([x : (U Leaf Node) (car z)])
-             (if (Leaf? x)
-                 ;; leaf
-                 (let ([s (hash-ref stitch-hash (leaf-stitchtype x))]
-                       [n (leaf-count x)]
-                       [c (leaf-yarntype x)])
-                   (x-loop (cdr z)
-                           c
-                           (string-append
-                            (if (false? last-yarn)
-                                (string-append y " " (inyarn->text c))
-                                (if (not (eq? last-yarn c))
-                                    (string-append (string-chop-last y) "; " (inyarn->text c))
-                                    y)) " "
-                                        (if (stitchtype-repeatable s)
-                                            (string-append (stitchtype-id s) (~a n) "," )
-                                            (string-append (stitchtype-id s)
-                                                           (if (= n 1)
-                                                               ""
-                                                               (format " ~a times" n))
-                                                           ",")))))
-                 ;; node
-                 (let ([t (node-tree x)]
-                       [n (node-count x)])
-                   (string-append (string-chop-last y) "; [" (stitches->text t) " ] "
-                                  (if (= n 1)
-                                      "once"
-                                      (if (= n 2)
-                                          "twice"
-                                          (format "~a times" n)))
-                                  ","))))))))
-
-  ;; format pattern for text output
-  (: pattern->text : (Pattern -> String))
-  (define (pattern->text p)
-    (let* ([row-lex (if (eq? (Pattern-geometry p) 'circular)
-                        "Round"
-                        "Row")]
-           [data (Rowmap-data (Pattern-rownums p))]
-           ;; order rowinfos by minimum row number
-           [rowinfo-pairs ((inst map (Pairof Natural Natural) Natural Natural)
-                           cons
-                           (map (lambda ([xs : (Vectorof Natural)]) (apply min (vector->list xs)))
-                                (vector->list data))
-                           (range (vector-length data)))]
-           [rowinfo-ordered (sort rowinfo-pairs
-                                  (lambda ([x : (Pairof Natural Natural)] [y : (Pairof Natural Natural)])
-                                    (< (car x) (car y))))]
-           [rowinfo-order ((inst map Natural (Pairof Natural Natural)) cdr rowinfo-ordered)]
-           [n : Natural (length rowinfo-order)])
-      ;; loop over rowinfos
-      (let loop ([i : Natural 0]
-                 [res : String
-                      (let ([hand : Boolean (eq? 'hand (Pattern-technology p))]
-                            [flat : Boolean (eq? 'flat (Pattern-geometry p))]
-                            [rs : Boolean (eq? 'rs (Pattern-startface p))])
-                        (string-append
-
-                         ;; initial paragraph describing pattern options
-                         "This " (symbol->string (Pattern-technology p))
-                         " knitting pattern is designed to be knit "
-                         (if flat
-                             (string-append "flat. "
-                                            (if hand
-                                                "Odd-numbered rows are"
-                                                "Every row is"))
-                             "in the round. Every round is")
-                         " knit on the " (if rs "RS" "WS") " of the piece"
-                         (if (and flat hand)
-                             (string-append ", even-numbered rows on the " (if rs "WS" "RS"))
-                             "")
-                         ". The first " (string-downcase row-lex)
-                         " starts on the " (symbol->string (Pattern-startside p))
-                         " hand side of the pattern.\n"
-
-                         ;; paragraph describing yarns
-                         (yarns->text (Pattern-yarns p))
-
-                         ;; beginning of knitting instructions
-                         "\nCast on "
-                         (~a (Rowinfo-stitches-in-total (vector-ref (Pattern-rowinfo p) 0)))
-                         " stitches"
-                         (if flat
-                             ""
-                             " and join in the round")
-                         ".\n"))])
-        (if (< i n)
-            (let* ([j (list-ref rowinfo-order i)]
-                   [rownums-j (vector->list (vector-ref data j))]
-                   [rowinfo-j (vector-ref (Pattern-rowinfo p) j)]
-                   [memo-j (Rowinfo-memo rowinfo-j)])
-              (loop (add1 i)
-                    (string-append res
-                                   ;; row/round lexeme
-                                   row-lex
-                                   ;; row numbers
-                                   (format-rows rownums-j)
-                                   ":"
-                                   ;; stitches
-                                   (stitches->text (Rowinfo-stitches rowinfo-j))
-                                   ;; annotations
-                                   (let ([annot : (Listof String)
-                                                (filter-not
-                                                 (lambda ([x : String]) (zero? (string-length x)))
-                                                 (list
-                                                  ;; memo
-                                                  (if (zero? (string-length memo-j))
-                                                      ""
-                                                      (string-append #| "memo " |# memo-j))
-                                                  ;; number of stitches
-                                                  (if (= i (sub1 n))
-                                                      (string-append (~a (Rowinfo-stitches-out-total rowinfo-j))
-                                                                     " stitches")
-                                                      "")))])
-                                     (if (null? annot)
-                                         ""
-                                         (string-append " (" (string-join annot "; ") ")")))
-                                   ".\n")))
-            res))))
+      (Pattern name rowinfo~ rowmap~ technology geometry startface startside gauge yarns)))
 
   ;; end of module
-  (log-knitscheme-debug "finishing knit-structs module definition"))
+  (log-knitscheme-debug "finishing knitscheme-base module definition"))
 
-(require (submod "." knitstructs))
+(require 'knitscheme-base-submodule)
 
 ;; set up thread to print output from log receiver
 (void
  (thread
-  (lambda () (let sync-loop ()
+  (λ () (let sync-loop ()
                (define v (sync knitscheme-receiver))
                (printf "[~a] ~a\n" (vector-ref v 0) (vector-ref v 1))
                (sync-loop)))))
@@ -1703,7 +1519,7 @@
 (define-repeatable-stitch slwyif    (hash-ref stitch-hash #x51))
 (define-repeatable-stitch co        (hash-ref stitch-hash #xbc))
 
-(define-unrepeatable-stitch drop    (hash-ref stitch-hash #x2c))
+(define-unrepeatable-stitch dropst  (hash-ref stitch-hash #x2c)) ; `drop` is already defined
 (define-unrepeatable-stitch k2tog   (hash-ref stitch-hash #x55))
 (define-unrepeatable-stitch p2tog   (hash-ref stitch-hash #x57))
 (define-unrepeatable-stitch k3tog   (hash-ref stitch-hash #x73))
@@ -1730,9 +1546,9 @@
 ;; define k1 ... k20, p1 ... p20, etc.
 (define-syntax (define-variable-repeat-stitches stx)
   (syntax-case stx ()
-    [(_) (let ([make-name (lambda (id n) (format-id stx "~a~a" id n))])
+    [(_) (let ([make-name (λ (id n) (format-id stx "~a~a" id n))])
            (with-syntax ([((id n name) ...)
-                          (map (lambda (xs) (list (car xs) (cdr xs) (make-name (car xs) (cdr xs))))
+                          (map (λ (xs) (list (car xs) (cdr xs) (make-name (car xs) (cdr xs))))
                                (for*/list ([id '(k p ktbl ptbl kb pb bo)] [n (in-range 1 21)])
                                  (cons id n)))])
              #'(begin
@@ -1861,7 +1677,7 @@
   ;; variable number repeat evaluates negative
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      rows(1 #:stitches 2)(p3 k)))
 
   ;; consecutive and conformable
@@ -1886,19 +1702,19 @@
   ;; consecutive but not conformable
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      rows(1 2)(k1 m)))
 
   ;; consecutive but not conformable
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      rows(1 2)(k1 ssk)))
 
   ;; no row numbers
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      rows(null)(k1)))
 
 
@@ -1960,6 +1776,7 @@
    (pattern #:technology 'hand #:startface 'ws #:startside 'left
             rows(1 #:memo "test of `pattern` constructor")(k1))
    (Pattern
+    ""
     (vector (Rowinfo '((1 . #s(stitch 107 0))) "test of `pattern` constructor" 0 1 1 0 0 0 0))
     (Rowmap '#(#(1)) 1)
     'hand
@@ -1972,7 +1789,7 @@
   ;; machine knits cannot be circular
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern #:technology 'machine #:geometry 'circular
               rows(1 #:memo "test of `pattern` constructor")(k1))))
 
@@ -1981,6 +1798,7 @@
    (pattern rows(1 3 #:stitches 2 #:memo "test of `pattern` constructor")(k m)
             rows(2 4 #:memo "test of `pattern` constructor")(k2tog))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
@@ -1999,6 +1817,7 @@
   (check-equal?
    (pattern rows(1 #:stitches 9 #:memo "test of `pattern` constructor")(x3(k1 p)))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((3 (1 . #s(stitch 107 0))
@@ -2016,6 +1835,7 @@
    (pattern #:technology 'hand #:geometry 'circular
             rows(seq(1 4) #:stitches 8 #:memo "test of `pattern` constructor")(k1 repeat(k1 p1) k1))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
@@ -2036,6 +1856,7 @@
                    #:memo "test of `pattern` constructor")(k1 repeat(k1 p1) k1)
                                                           rows(2 4 #:memo "test of `pattern` constructor")(k1 repeat(p1 k1) k1))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
@@ -2061,6 +1882,7 @@
             rows(3 7 #:memo "test of `pattern` constructor")(k1 x1(repeat(k1 k1)) x1(k1))
             rows(4 8 #:memo "test of `pattern` constructor")(k1 repeat(p2) k1))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
@@ -2093,6 +1915,7 @@
             rows(4 8 #:memo "test of `pattern` constructor")(k1 repeat(p2) k1)
             row(   9 #:memo "test of `pattern` constructor")(bo8))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
@@ -2122,6 +1945,7 @@
    (pattern rows(1 #:memo "test of `pattern` constructor")(k m)
             rows(2 #:memo "test of `pattern` constructor")(k2tog))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 107 0))
@@ -2141,6 +1965,7 @@
    (pattern rows(1 #:memo "test of `pattern` constructor")(k2tog)
             rows(2 #:memo "test of `pattern` constructor")(k m))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 85 0))) "test of `pattern` constructor" 0 2 1 0 0 0 0)
@@ -2160,6 +1985,7 @@
    (pattern rows(1 3 5 #:memo "test of `pattern` constructor")(k2tog)
             rows(2 4 #:memo "test of `pattern` constructor")(k(0) m))
    (Pattern
+    ""
     (vector
      (Rowinfo
       '((1 . #s(stitch 85 0))) "test of `pattern` constructor" 0 2 1 0 0 0 0)
@@ -2179,6 +2005,7 @@
    (pattern rows(1 #:memo "test of `pattern` constructor")(p1 k)
             rows(2 #:memo "test of `pattern` constructor")(p1))
    (Pattern
+    ""
     (vector
      (Rowinfo '((1 . #s(stitch 112 0))) "test of `pattern` constructor" 0 1 1 0 0 0 0)
      (Rowinfo '((1 . #s(stitch 112 0))) "test of `pattern` constructor" 0 1 1 0 0 0 0))
@@ -2193,20 +2020,20 @@
   ;; unconstrained variable repeat (single row)
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern row(1)(k))))
 
   ;; unconstrained variable repeat (two rows)
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern row(1)(k)
               row(2)(p))))
 
   ;; unconstrained variable repeat (multiple rows)
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern row(1)(k)
               row(2)(k p)
               row(3)(p)
@@ -2215,70 +2042,41 @@
   ;; wrong number of stitches supplied
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern rows(1 3 #:stitches 3)(k1 m) rows(2 4)(k2tog))))
 
   ;; row numbers do not start at 1
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern rows(2 4)(k1 m) rows(3 5)(k2tog))))
 
   ;; non-conformable consecutive rows (caught in Row struct guard function)
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern rows(1 2)(k1 m) rows(3)(k2tog))))
 
   ;; non-conformable consecutive rows (caught in Pattern struct guard function}
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern rows(1 3)(k1 m) rows(2 4 5)(k2tog))))
 
   ;; non-consecutive row numbers (caught in Rowmap struct guard function}
   (check-exn
    exn:fail?
-   (lambda ()
+   (λ ()
      (pattern rows(1 3)(k1 m) rows(2 5)(k2tog))))
 
   ;; too many yarns
   (check-exn
    exn:fail?
-   (lambda ()
-     (pattern #:yarns (vector->immutable-vector (build-vector 257 (lambda (x) #s(yarntype "" "" "" ""))))
+   (λ ()
+     (pattern #:yarns (vector->immutable-vector (build-vector 257 (λ (x) #s(yarntype "" "" "" ""))))
               rows(1)(k1))))
-
-  ;; tests of `yarns->text` function
-  (log-knitscheme-debug "start tests of `yarns->text` function")
-
-  (check-equal?
-   (yarns->text '#())
-   "")
-
-  (check-equal?
-   (yarns->text '#(#s(yarntype "" "" "" "")))
-   "\nYarn:\nMC\n")
-
-  (check-equal?
-   (yarns->text '#(#f #s(yarntype "unknown" "wool" "worsted" "red")))
-   #| "\nYarn:\nMC\nCC1 - brand unknown, fiber wool, weight worsted, color red\n") |#
-   "\nYarn:\nMC\nCC1 - unknown wool worsted red\n")
 
   (log-knitscheme-info "tests completed"))
 
-
-;; demo of `yarns` function and `pattern->text` output
-(define pattern1
-  (pattern #:technology 'hand #:geometry 'flat
-           #:yarns yarns('("white" "worsted" "acrylic" "unknown")
-                         '("black" "worsted" "acrylic" "unknown"))
-           rows(2 5)(k1 repeat(k1 p1) k1)
-           rows(8 #:memo "last row")(bo)
-           rows(1 3 #:memo "some annotation here")(k2 p1 cc1(p3))
-           rows(7)(k2tog k2tog k2tog)
-           rows(4 6)(x2(x3(p1) k))))
-(log-knitscheme-info (string-append "\n\n" (pattern->text pattern1)))
-
-(log-knitscheme-info "end of knitscheme.rkt")
+(log-knitscheme-info "end of knitscheme-chart.rkt")
 ;; end

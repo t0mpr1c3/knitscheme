@@ -1,12 +1,15 @@
 # knitscheme
+
 Domain Specific Language for knitting patterns
 
 ## Description
+
 DSL for knitting patterns with surface syntax
 resembling Knitspeak, intended as a target for
 editors and parsers.
 
 ## Motivation
+
 Knitspeak is expressive and relatively compact.
 Above all, it is readable by humans. On the downside,
 it lacks a specification. The [Stitch Maps](https://stitch-maps.com)
@@ -29,11 +32,15 @@ result in patterns of different width:
 have changed because they are back-generated after
 parsing.)
 
-A typed DSL has advantages over a validated or regularized
-human-style specification. This preference can be summarized
-in the phrase ["Parse, don't validate".](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/)
-
 ## Implementation
 
-[Typed Racket](https://docs.racket-lang.org/ts-guide/), for now.
+The current implementation has been coded as a module for
+[Typed Racket](https://docs.racket-lang.org/ts-guide/).
+
+Patterns are encoded in a format that is easy for humans
+to write and parse, but is also highly structured. Output
+formats include written instructions for hand knitting,
+and charts that graphically represent the stitches and
+the color of the yarn they are knitted in.
+
 

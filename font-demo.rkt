@@ -16,8 +16,8 @@
 
 (define mypen (make-pen #:color "Black" #:width 1))
 
-(define chart-width 20) ; number of stitches
-(define chart-height 20) ; number of rows
+(define chart-width 21) ; number of stitches
+(define chart-height 21) ; number of rows
 (define chart-gap (* 2 chart-symbol)) ; pixel gap around chart
 (define frame (new frame%
                    [label "Pattern 1"]
@@ -27,26 +27,9 @@
              [paint-callback
               (lambda (canvas dc)
                 (send dc set-pen mypen)
-                ;; chart frame
-                (send dc draw-rectangle
-                      chart-gap chart-gap
-                      (+ (* chart-width  chart-symbol) 1)
-                      (+ (* chart-height chart-symbol) 1))
-                ;; horizontal lines
-                (for ([i (in-range chart-height)])
-                  (send dc draw-line
-                        chart-gap
-                        (+ chart-gap (* i chart-symbol))
-                        {+ chart-gap (* chart-width chart-symbol)}
-                        (+ chart-gap (* i chart-symbol))))
-                ;; vertical lines
-                (for ([i (in-range chart-width)])
-                  (send dc draw-line
-                        (+ chart-gap (* i chart-symbol))
-                        chart-gap
-                        (+ chart-gap (* i chart-symbol))
-                        (+ chart-gap (* chart-height chart-symbol))))
                 (send dc set-scale 1 1)
+                (send dc set-text-mode 'solid)
+                (send dc set-text-background "white smoke")
                 (send dc set-text-foreground "black")
                 (send dc set-font myfont)
                 (send dc draw-text "kpyTkpyTkpyTkpyTkpyT"
@@ -82,5 +65,26 @@
                 (send dc draw-text "ijklmnopqrstuvwxyz"
                       (+ 1 chart-gap)
                       (+ 1 chart-gap (* (sub1 chart-height) chart-symbol)))
+                #|
+                ;; chart frame
+                (send dc draw-rectangle
+                      chart-gap chart-gap
+                      (+ (* chart-width  chart-symbol) 1)
+                      (+ (* chart-height chart-symbol) 1))
+                |#
+                ;; horizontal lines
+                (for ([i (in-range (add1 chart-height))])
+                  (send dc draw-line
+                        chart-gap
+                        (+ chart-gap (* i chart-symbol))
+                        {+ chart-gap (* chart-width chart-symbol)}
+                        (+ chart-gap (* i chart-symbol))))
+                ;; vertical lines
+                (for ([i (in-range (add1 chart-width))])
+                  (send dc draw-line
+                        (+ chart-gap (* i chart-symbol))
+                        chart-gap
+                        (+ chart-gap (* i chart-symbol))
+                        (+ chart-gap (* chart-height chart-symbol))))
                 )])
 (send frame show #t)
